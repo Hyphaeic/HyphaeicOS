@@ -62,8 +62,9 @@ fn is_in_direction(
     // Dot product with direction vector should be positive
     let dot_product = to_target_x * direction_x + to_target_y * direction_y;
     
-    // Require significant movement in the desired direction
-    dot_product > 1.0
+    // Accept any forward movement (threshold > 0.0)
+    // Using > 1.0 would exclude valid targets less than 1 pixel away
+    dot_product > 0.0
 }
 
 /// Calculate distance with directional weighting

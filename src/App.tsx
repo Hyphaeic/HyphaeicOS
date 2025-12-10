@@ -1,5 +1,3 @@
-/*
-
 import { createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import BackgroundIC from "./HMI/Background/background_IC";
