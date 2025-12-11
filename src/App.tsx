@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import BackgroundIC from "./HMI/Background/background_IC";
+import Interface from "./HMI/A_Interface/Interface";
 import "./App.css";
 
 function App() {
@@ -13,8 +14,9 @@ function App() {
   }
 
   return (
-    <BackgroundIC/>
-
+    <BackgroundIC>
+      <Interface />
+    </BackgroundIC>
   );
 }
 

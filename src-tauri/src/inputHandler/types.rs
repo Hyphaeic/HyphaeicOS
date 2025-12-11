@@ -219,3 +219,4 @@ pub enum NavigationResult {
     /// Error occurred
     Error { message: String },
 }
+

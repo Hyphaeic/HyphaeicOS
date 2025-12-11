@@ -1,0 +1,97 @@
+.osbar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  height: 100vh;
+  width: calc(100vw / 27);
+  background-color: #DECC9C;
+  display: flex;
+  flex-direction: column;
+  z-index: 1000;
+}
+
+/* Subcontainer base styles - square cells matching OSbar width in desktop */
+.osbar-subcontainer {
+  width: calc(100vw / 27);
+  height: calc(100vw / 27);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+/* Logo subcontainer specific styles */
+.osbar-subcontainer-logo {
+  padding: 0.35rem;
+  background-color: rgba(65, 239, 164, 1);
+}
+
+.osbar-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
+}
+
+/* Placeholder text styling for subcontainers 1-3 */
+.osbar-subcontainer span {
+  font-size: 1rem;
+  color: #8B7355;
+  opacity: 0.5;
+}
+
+/* Domain container in OSbar */
+.osbar-domain {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+/* Make subcontainers within domain take full available space */
+.osbar-domain .osbar-subcontainer {
+  flex: 0 0 auto;
+}
+
+/* Switch to bottom bar when aspect ratio becomes portrait (taller than wide) */
+@media (max-aspect-ratio: 1/1) {
+  .osbar {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    width: 100vw;
+    height: calc(100vh / 9);
+    flex-direction: row;
+    align-items: center;
+  }
+
+  /* In bottom-bar mode, lay out domain contents horizontally
+     so buttons follow the OSbar alignment */
+  .osbar-domain {
+    flex-direction: row;
+  }
+
+  .osbar-domain .osbar-subcontainer {
+    flex: 0 0 auto;
+  }
+
+  /* Subcontainers become square cells matching OSbar height in mobile */
+  .osbar-subcontainer {
+    width: calc(100vh / 9);
+    height: calc(100vh / 9);
+    padding: 0.4rem;
+  }
+
+  .osbar-subcontainer-logo {
+    padding: 0.4rem;
+  }
+
+  .osbar-logo {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+}
+

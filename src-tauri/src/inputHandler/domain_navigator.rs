@@ -408,6 +408,15 @@ impl DomainNavigator {
     pub fn get_all_domain_ids(&self) -> Vec<String> {
         self.domains.keys().cloned().collect()
     }
+
+    /// Update the layout mode of a domain
+    pub fn update_layout_mode(&mut self, domain_id: &str, layout_mode: LayoutMode) -> Result<(), String> {
+        let domain = self.domains.get_mut(domain_id)
+            .ok_or_else(|| format!("Domain '{}' not found", domain_id))?;
+        
+        domain.layout_mode = layout_mode;
+        Ok(())
+    }
 }
 
 impl Default for DomainNavigator {
@@ -500,3 +509,4 @@ mod tests {
         assert!(matches!(result, NavigationResult::BoundaryReached));
     }
 }
+

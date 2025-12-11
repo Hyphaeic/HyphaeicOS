@@ -248,3 +248,4 @@ mod tests {
         assert!(!is_in_direction(0.0, 0.0, -5.0, 0.0, 1.0, 0.0)); // Left (wrong direction)
     }
 }
+

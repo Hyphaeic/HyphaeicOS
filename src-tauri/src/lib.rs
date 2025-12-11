@@ -174,6 +174,34 @@ fn get_cursor_position(state: State<AppState>) -> Result<serde_json::Value, Stri
     }
 }
 
+/// Update domain layout mode
+#[tauri::command]
+fn update_domain_layout(
+    domain_id: String,
+    layout_mode: String,
+    grid_columns: Option<usize>,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let layout = match layout_mode.as_str() {
+        "grid" => LayoutMode::Grid {
+            columns: grid_columns.unwrap_or(3),
+        },
+        "list-vertical" => LayoutMode::List {
+            direction: ListDirection::Vertical,
+        },
+        "list-horizontal" => LayoutMode::List {
+            direction: ListDirection::Horizontal,
+        },
+        "spatial" => LayoutMode::Spatial,
+        _ => return Err(format!("Unknown layout mode: {}", layout_mode)),
+    };
+
+    let mut navigator = state.domain_navigator.lock()
+        .map_err(|e| format!("Failed to lock navigator: {}", e))?;
+
+    navigator.update_layout_mode(&domain_id, layout)
+}
+
 /// Get all domain IDs (for debugging)
 #[tauri::command]
 fn get_all_domains(state: State<AppState>) -> Result<Vec<String>, String> {
@@ -181,6 +209,19 @@ fn get_all_domains(state: State<AppState>) -> Result<Vec<String>, String> {
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     Ok(navigator.get_all_domain_ids())
+}
+
+/// Get detailed domain info for debugging
+#[tauri::command]
+fn debug_domain(domain_id: String, state: State<AppState>) -> Result<serde_json::Value, String> {
+    let navigator = state.domain_navigator.lock()
+        .map_err(|e| format!("Failed to lock navigator: {}", e))?;
+
+    match navigator.get_domain_info(&domain_id) {
+        Some(domain) => serde_json::to_value(domain)
+            .map_err(|e| format!("Serialization error: {}", e)),
+        None => Err(format!("Domain '{}' not found", domain_id)),
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -213,6 +254,8 @@ pub fn run() {
             switch_domain,
             get_cursor_position,
             get_all_domains,
+            debug_domain,
+            update_domain_layout,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
