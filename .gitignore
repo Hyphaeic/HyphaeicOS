@@ -3,3 +3,4 @@ dist
 .vscode
 image_resize.py
 src-tauri\target
+COMMIT_MESSAGE.md

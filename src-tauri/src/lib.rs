@@ -7,13 +7,41 @@ mod asset_loader;
 mod input_handler;
 
 use asset_loader::{clear_asset_cache, get_asset_cache_path, is_asset_cached, load_asset};
-use input_handler::{DomainNavigator, LayoutMode, ListDirection, GateDirection, Rect, WASDKey, NavigationResult};
-use std::sync::Mutex;
-use tauri::State;
+use input_handler::{DomainNavigator, LayoutMode, ListDirection, GateDirection, Rect, WASDKey, NavigationResult, ElementType};
+use std::sync::{Mutex, Arc};
+use tauri::{State, Manager, AppHandle, Emitter};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use serde::Serialize;
 
-// Global state for domain navigator
+// Event payload types for frontend communication
+#[derive(Clone, Serialize)]
+struct CursorMovedPayload {
+    domain_id: String,
+    element_id: String,
+    element_type: String,
+}
+
+#[derive(Clone, Serialize)]
+struct AtGatePayload {
+    gate_id: String,
+    target_domain: String,
+}
+
+#[derive(Clone, Serialize)]
+struct DomainSwitchedPayload {
+    from_domain: String,
+    to_domain: String,
+    new_element_id: String,
+}
+
+#[derive(Clone, Serialize)]
+struct BoundaryReachedPayload {
+    direction: String,
+}
+
+// Global state for domain navigator (Arc for sharing with shortcut handlers)
 struct AppState {
-    domain_navigator: Mutex<DomainNavigator>,
+    domain_navigator: Arc<Mutex<DomainNavigator>>,
 }
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -140,25 +168,134 @@ fn get_active_domain(state: State<AppState>) -> Result<Option<String>, String> {
     Ok(navigator.get_active_domain_id())
 }
 
-/// Handle WASD keyboard input
+/// Handle WASD keyboard input - processes navigation and emits events to frontend
 #[tauri::command]
-fn handle_wasd_input(key: String, state: State<AppState>) -> Result<NavigationResult, String> {
+fn handle_wasd_input(key: String, app: AppHandle, state: State<AppState>) -> Result<NavigationResult, String> {
     let wasd_key = WASDKey::from_str(&key)
         .ok_or_else(|| format!("Invalid WASD key: {}", key))?;
 
     let mut navigator = state.domain_navigator.lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
-    Ok(navigator.handle_wasd_input(wasd_key))
+    let result = navigator.handle_wasd_input(wasd_key.clone());
+    
+    // Emit appropriate event based on navigation result
+    match &result {
+        NavigationResult::CursorMoved { domain_id, element_id, element_type } => {
+            let type_str = match element_type {
+                ElementType::Button => "Button",
+                ElementType::Gate => "Gate",
+            };
+            let _ = app.emit("cursor-moved", CursorMovedPayload {
+                domain_id: domain_id.clone(),
+                element_id: element_id.clone(),
+                element_type: type_str.to_string(),
+            });
+        }
+        NavigationResult::AtGate { gate_id, target_domain } => {
+            let _ = app.emit("at-gate", AtGatePayload {
+                gate_id: gate_id.clone(),
+                target_domain: target_domain.clone(),
+            });
+        }
+        NavigationResult::BoundaryReached => {
+            let direction = match wasd_key {
+                WASDKey::W => "up",
+                WASDKey::A => "left",
+                WASDKey::S => "down",
+                WASDKey::D => "right",
+            };
+            let _ = app.emit("boundary-reached", BoundaryReachedPayload {
+                direction: direction.to_string(),
+            });
+        }
+        NavigationResult::NoActiveDomain => {
+            // No event needed - this is a state issue
+        }
+        NavigationResult::DomainSwitched { from_domain, to_domain, new_element_id } => {
+            let _ = app.emit("domain-switched", DomainSwitchedPayload {
+                from_domain: from_domain.clone(),
+                to_domain: to_domain.clone(),
+                new_element_id: new_element_id.clone(),
+            });
+        }
+        NavigationResult::Error { message: _ } => {
+            // Errors are returned, not emitted
+        }
+    }
+    
+    Ok(result)
 }
 
-/// Switch to the domain at the current gate
+/// Toggle fullscreen mode (F11)
 #[tauri::command]
-fn switch_domain(state: State<AppState>) -> Result<NavigationResult, String> {
+fn toggle_fullscreen(app: tauri::AppHandle) -> Result<bool, String> {
+    let window = app.get_webview_window("main")
+        .ok_or_else(|| "Main window not found".to_string())?;
+    
+    let is_fullscreen = window
+        .is_fullscreen()
+        .map_err(|e| format!("Failed to check fullscreen state: {}", e))?;
+
+    if is_fullscreen {
+        window
+            .set_fullscreen(false)
+            .map_err(|e| format!("Failed to exit fullscreen: {}", e))?;
+        Ok(false)
+    } else {
+        window
+            .set_fullscreen(true)
+            .map_err(|e| format!("Failed to enter fullscreen: {}", e))?;
+        Ok(true)
+    }
+}
+
+/// Switch to the domain at the current gate - emits domain-switched event
+#[tauri::command]
+fn switch_domain(app: AppHandle, state: State<AppState>) -> Result<NavigationResult, String> {
     let mut navigator = state.domain_navigator.lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
-    Ok(navigator.switch_domain())
+    let result = navigator.switch_domain();
+    
+    // Emit event on successful domain switch
+    if let NavigationResult::DomainSwitched { from_domain, to_domain, new_element_id } = &result {
+        let _ = app.emit("domain-switched", DomainSwitchedPayload {
+            from_domain: from_domain.clone(),
+            to_domain: to_domain.clone(),
+            new_element_id: new_element_id.clone(),
+        });
+        // Also emit cursor-moved for the new position
+        let _ = app.emit("cursor-moved", CursorMovedPayload {
+            domain_id: to_domain.clone(),
+            element_id: new_element_id.clone(),
+            element_type: "Button".to_string(),
+        });
+    }
+
+    Ok(result)
+}
+
+/// Emit the current cursor position - useful for initial setup
+#[tauri::command]
+fn emit_cursor_position(app: AppHandle, state: State<AppState>) -> Result<bool, String> {
+    let navigator = state.domain_navigator.lock()
+        .map_err(|e| format!("Failed to lock navigator: {}", e))?;
+
+    if let Some(cursor) = navigator.get_cursor_position() {
+        let type_str = match cursor.element_type {
+            ElementType::Button => "Button",
+            ElementType::Gate => "Gate",
+        };
+        let _ = app.emit("cursor-moved", CursorMovedPayload {
+            domain_id: cursor.domain_id,
+            element_id: cursor.element_id,
+            element_type: type_str.to_string(),
+        });
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 /// Get current cursor position
@@ -224,16 +361,154 @@ fn debug_domain(domain_id: String, state: State<AppState>) -> Result<serde_json:
     }
 }
 
+/// Helper function to process WASD navigation and emit events
+fn process_wasd_navigation(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigator>>, key: WASDKey) {
+    let mut nav = match navigator.lock() {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("Failed to lock navigator: {}", e);
+            return;
+        }
+    };
+
+    let result = nav.handle_wasd_input(key.clone());
+    
+    // Emit appropriate event based on navigation result
+    match &result {
+        NavigationResult::CursorMoved { domain_id, element_id, element_type } => {
+            let type_str = match element_type {
+                ElementType::Button => "Button",
+                ElementType::Gate => "Gate",
+            };
+            let _ = app.emit("cursor-moved", CursorMovedPayload {
+                domain_id: domain_id.clone(),
+                element_id: element_id.clone(),
+                element_type: type_str.to_string(),
+            });
+        }
+        NavigationResult::AtGate { gate_id, target_domain } => {
+            let _ = app.emit("at-gate", AtGatePayload {
+                gate_id: gate_id.clone(),
+                target_domain: target_domain.clone(),
+            });
+        }
+        NavigationResult::BoundaryReached => {
+            let direction = match key {
+                WASDKey::W => "up",
+                WASDKey::A => "left",
+                WASDKey::S => "down",
+                WASDKey::D => "right",
+            };
+            let _ = app.emit("boundary-reached", BoundaryReachedPayload {
+                direction: direction.to_string(),
+            });
+        }
+        _ => {}
+    }
+}
+
+/// Helper function to process Enter/Space for domain switching
+fn process_activate(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigator>>) {
+    let mut nav = match navigator.lock() {
+        Ok(n) => n,
+        Err(_) => return,
+    };
+
+    // Check if we're at a gate
+    if let Some(cursor) = nav.get_cursor_position() {
+        if cursor.element_type == ElementType::Gate {
+            let result = nav.switch_domain();
+            
+            if let NavigationResult::DomainSwitched { from_domain, to_domain, new_element_id } = &result {
+                let _ = app.emit("domain-switched", DomainSwitchedPayload {
+                    from_domain: from_domain.clone(),
+                    to_domain: to_domain.clone(),
+                    new_element_id: new_element_id.clone(),
+                });
+                let _ = app.emit("cursor-moved", CursorMovedPayload {
+                    domain_id: to_domain.clone(),
+                    element_id: new_element_id.clone(),
+                    element_type: "Button".to_string(),
+                });
+            }
+        } else {
+            // Not at a gate - emit button activation event
+            let _ = app.emit("button-activate", CursorMovedPayload {
+                domain_id: cursor.domain_id,
+                element_id: cursor.element_id,
+                element_type: "Button".to_string(),
+            });
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Initialize domain navigator with Arc for sharing with shortcut handlers
+    let navigator = Arc::new(Mutex::new(DomainNavigator::new()));
+
     // Initialize application state
     let app_state = AppState {
-        domain_navigator: Mutex::new(DomainNavigator::new()),
+        domain_navigator: navigator.clone(),
     };
+
+    // Define WASD shortcuts (no modifiers)
+    let shortcut_w = Shortcut::new(Some(Modifiers::empty()), Code::KeyW);
+    let shortcut_a = Shortcut::new(Some(Modifiers::empty()), Code::KeyA);
+    let shortcut_s = Shortcut::new(Some(Modifiers::empty()), Code::KeyS);
+    let shortcut_d = Shortcut::new(Some(Modifiers::empty()), Code::KeyD);
+    let shortcut_enter = Shortcut::new(Some(Modifiers::empty()), Code::Enter);
+    let shortcut_space = Shortcut::new(Some(Modifiers::empty()), Code::Space);
+
+    // Clone navigator for the shortcut handler closure
+    let nav_for_handler = navigator.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(move |app, shortcut, event| {
+                    // Only process on key press, not release
+                    if event.state != ShortcutState::Pressed {
+                        return;
+                    }
+
+                    // Match shortcut and process navigation
+                    if shortcut == &shortcut_w {
+                        process_wasd_navigation(app, &nav_for_handler, WASDKey::W);
+                    } else if shortcut == &shortcut_a {
+                        process_wasd_navigation(app, &nav_for_handler, WASDKey::A);
+                    } else if shortcut == &shortcut_s {
+                        process_wasd_navigation(app, &nav_for_handler, WASDKey::S);
+                    } else if shortcut == &shortcut_d {
+                        process_wasd_navigation(app, &nav_for_handler, WASDKey::D);
+                    } else if shortcut == &shortcut_enter || shortcut == &shortcut_space {
+                        process_activate(app, &nav_for_handler);
+                    }
+                })
+                .build(),
+        )
         .manage(app_state)
+        .setup(|app| {
+            // Register global shortcuts when app starts
+            let shortcuts = vec![
+                Shortcut::new(Some(Modifiers::empty()), Code::KeyW),
+                Shortcut::new(Some(Modifiers::empty()), Code::KeyA),
+                Shortcut::new(Some(Modifiers::empty()), Code::KeyS),
+                Shortcut::new(Some(Modifiers::empty()), Code::KeyD),
+                Shortcut::new(Some(Modifiers::empty()), Code::Enter),
+                Shortcut::new(Some(Modifiers::empty()), Code::Space),
+            ];
+
+            for shortcut in shortcuts {
+                if let Err(e) = app.global_shortcut().register(shortcut) {
+                    eprintln!("Failed to register shortcut: {}", e);
+                }
+            }
+
+            println!("WASD navigation shortcuts registered at OS level");
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             // Original commands
             greet,
@@ -253,9 +528,11 @@ pub fn run() {
             handle_wasd_input,
             switch_domain,
             get_cursor_position,
+            emit_cursor_position,
             get_all_domains,
             debug_domain,
             update_domain_layout,
+            toggle_fullscreen,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
