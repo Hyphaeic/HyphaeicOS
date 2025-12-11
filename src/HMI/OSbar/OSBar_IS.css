@@ -17,7 +17,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0.35rem;
+  padding: 0;
   box-sizing: border-box;
   flex-shrink: 0;
 }
@@ -36,13 +36,6 @@
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
 }
 
-/* Placeholder text styling for subcontainers 1-3 */
-.osbar-subcontainer span {
-  font-size: 1rem;
-  color: #8B7355;
-  opacity: 0.5;
-}
-
 /* Domain container in OSbar */
 .osbar-domain {
   display: flex;
@@ -53,6 +46,20 @@
 /* Make subcontainers within domain take full available space */
 .osbar-domain .osbar-subcontainer {
   flex: 0 0 auto;
+  position: relative;
+}
+
+/* Dividers between and after buttons (desktop - vertical layout) */
+.osbar-subcontainer-1::after,
+.osbar-subcontainer-2::after,
+.osbar-subcontainer-3::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background-color: #5a4a3a;
 }
 
 /* Switch to bottom bar when aspect ratio becomes portrait (taller than wide) */
@@ -77,11 +84,23 @@
     flex: 0 0 auto;
   }
 
+  /* Dividers between and after buttons (mobile - horizontal layout) */
+  .osbar-subcontainer-1::after,
+  .osbar-subcontainer-2::after,
+  .osbar-subcontainer-3::after {
+    bottom: auto;
+    left: auto;
+    right: 0;
+    top: 0;
+    width: 1px;
+    height: 100%;
+  }
+
   /* Subcontainers become square cells matching OSbar height in mobile */
   .osbar-subcontainer {
     width: calc(100vh / 9);
     height: calc(100vh / 9);
-    padding: 0.4rem;
+    padding: 0;
   }
 
   .osbar-subcontainer-logo {

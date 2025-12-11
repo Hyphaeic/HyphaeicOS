@@ -1,14 +1,29 @@
-import { onMount, onCleanup, createEffect } from "solid-js";
+import { onMount, onCleanup } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import OSbar_IC from "../OSbar/OSbar_IC";
+
+// Module-level flag to prevent concurrent navigation processing
+// Persists across hot reloads
+let isProcessingNavigation = false;
+
+// Track if handler is already registered (for hot reload protection)
+let handlerRegistered = false;
 
 /**
  * Interface component - Core composer for OSbar and other visual elements
  * Also handles global WASD keyboard navigation
  */
 export default function Interface() {
+  
   // Setup global WASD keyboard handler
   onMount(() => {
+    // Prevent duplicate handler registration during hot reload
+    if (handlerRegistered) {
+      console.warn('Keyboard handler already registered, skipping...');
+      return;
+    }
+    handlerRegistered = true;
+    
     // Debug: log all registered domains and buttons
     const debugNavState = async () => {
       try {
@@ -55,7 +70,21 @@ export default function Interface() {
       
       // Handle WASD navigation
       if (['w', 'a', 's', 'd'].includes(key)) {
+        // Ignore key repeat events (when key is held down)
+        // This prevents double-firing while keeping first press snappy
+        if (e.repeat) {
+          e.preventDefault();
+          return;
+        }
+        
+        // Prevent concurrent navigation processing
+        if (isProcessingNavigation) {
+          e.preventDefault();
+          return;
+        }
+        
         e.preventDefault();
+        isProcessingNavigation = true;
         
         try {
           const result = await invoke('handle_wasd_input', {
@@ -87,6 +116,9 @@ export default function Interface() {
           }
         } catch (error) {
           console.error('WASD navigation error:', error);
+        } finally {
+          // Reset flag after processing completes
+          isProcessingNavigation = false;
         }
       }
       
@@ -121,11 +153,13 @@ export default function Interface() {
     
     onCleanup(() => {
       window.removeEventListener('keydown', handleKeyDown);
+      handlerRegistered = false;
+      isProcessingNavigation = false;
     });
   });
 
   // Dispatch initial cursor position after component mounts and registrations complete
-  createEffect(async () => {
+  onMount(async () => {
     // Wait for registrations (adjust timing if needed)
     await new Promise(resolve => setTimeout(resolve, 200));
     
