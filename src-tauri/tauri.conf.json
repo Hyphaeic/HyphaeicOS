@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "hyphaeicos",
+  "productName": "HyphaeicOS",
   "version": "0.1.0",
   "identifier": "com.eonk.hyphaeicos",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "hyphaeicos",
+        "title": "HyphaeicOS",
         "width": 800,
         "height": 600
       }
