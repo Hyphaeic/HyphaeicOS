@@ -67,7 +67,23 @@ export default function Button_IC(props: ButtonProps) {
         );
       }
     } catch (error) {
-      console.error(`Failed to register button ${props.id}:`, error);
+      const msg = String(error);
+      if (msg.includes("already exists")) {
+        console.log(`Button '${props.id}' already registered in '${domainId}'`);
+        // If already registered, still mark as registered so we can receive updates
+        setIsRegistered(true);
+        
+        // Update focus state just in case
+        const cursor = await invoke('get_cursor_position');
+        if (cursor && typeof cursor === 'object' && 'element_id' in cursor) {
+          setIsFocused(
+            (cursor as any).element_id === props.id &&
+            (cursor as any).domain_id === domainId
+          );
+        }
+      } else {
+        console.error(`Failed to register button ${props.id}:`, error);
+      }
     }
   };
 

@@ -1,0 +1,51 @@
+/* Compositor - Main Window Manager Container */
+.compositor {
+  position: fixed;
+  left: calc(100vw / 27);
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: row;
+  background-color: transparent;
+  z-index: 100;
+}
+
+/* Subcontainer base - 50/50 split with padding */
+.compositor-subcontainer {
+  width: 50%;
+  height: 100%;
+  box-sizing: border-box;
+  position: relative;
+  padding: calc(100vw / 27);
+}
+
+/* Left subcontainer - compositional only (transparent) */
+.compositor-subcontainer-left {
+  background-color: transparent;
+}
+
+/* Right subcontainer - compositional only (transparent) */
+.compositor-subcontainer-right {
+  background-color: transparent;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Mobile mode - Portrait/Square (aspect ratio ≤ 1:1) */
+@media (max-aspect-ratio: 1/1) {
+  .compositor {
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: calc(100vh / 9);
+  }
+
+  /* Maintain side-by-side layout even on mobile */
+  .compositor-subcontainer {
+    width: 50%;
+    height: 100%;
+    padding: calc(100vw / 27);
+  }
+}
+

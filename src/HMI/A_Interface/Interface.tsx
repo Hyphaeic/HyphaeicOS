@@ -2,9 +2,13 @@ import { onMount, onCleanup } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import OSbar_IC from "../OSbar/OSbar_IC";
+import Compositor_IC from "../WindowManager/Compositor/Compositor_IC";
+import Window_IC from "../WindowManager/Window/Window_IC";
+import TESTING_DUMMY from "../TESTING_DUMMY/TESTING_DUMMY";
 
 // Track if F11 handler is registered (for hot reload protection)
 let f11HandlerRegistered = false;
+let focusHandlersRegistered = false;
 
 // Event payload types from Rust
 interface CursorMovedPayload {
@@ -77,11 +81,32 @@ export default function Interface() {
     unlisteners.push(unlistenDomain);
     
     // Listen for boundary-reached events from Rust
-    const unlistenBoundary = await listen<BoundaryReachedPayload>('boundary-reached', (event) => {
+    const unlistenBoundary = await listen<BoundaryReachedPayload>('boundary-reached', async (event) => {
       console.log('[Rust→UI] boundary-reached:', event.payload);
       window.dispatchEvent(new CustomEvent('boundary-reached', {
         detail: event.payload
       }));
+
+      // --- Custom Boundary Handling Logic ---
+      // "Implicit Gates": Switch domains based on boundary hit direction
+      try {
+        const activeDomain = await invoke('get_active_domain') as string | null;
+        
+        if (activeDomain === 'osbar-nav' && event.payload.direction === 'right') {
+          // Switch OSbar -> Window Header
+          console.log('Boundary right on OSbar -> Switching to Window');
+          await invoke('set_active_domain', { domainId: 'window-header-nav' });
+          await invoke('emit_cursor_position');
+        } 
+        else if (activeDomain === 'window-header-nav' && event.payload.direction === 'left') {
+          // Switch Window Header -> OSbar
+          console.log('Boundary left on Window -> Switching to OSbar');
+          await invoke('set_active_domain', { domainId: 'osbar-nav' });
+          await invoke('emit_cursor_position');
+        }
+      } catch (error) {
+        console.error('Boundary handler error:', error);
+      }
     });
     unlisteners.push(unlistenBoundary);
     
@@ -104,71 +129,115 @@ export default function Interface() {
   // F11 fullscreen toggle - ONLY webview-specific key handling
   // All other input (WASD, Enter, Space) is captured by Rust at OS level
   onMount(() => {
-    if (f11HandlerRegistered) {
-      console.warn('F11 handler already registered, skipping...');
-      return;
-    }
-    f11HandlerRegistered = true;
-    
-    const handleF11 = async (e: KeyboardEvent) => {
-      if (e.key === 'F11') {
-        e.preventDefault();
-        try {
-          await invoke('toggle_fullscreen');
-        } catch (error) {
-          console.error('Failed to toggle fullscreen:', error);
-        }
-      }
+    if (!f11HandlerRegistered) {
+      f11HandlerRegistered = true;
       
-      // Debug: 'X' key dumps navigation state (development only)
-      if (e.key.toLowerCase() === 'x' && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        e.preventDefault();
-        try {
-          const domains = await invoke('get_all_domains') as string[];
-          const cursor = await invoke('get_cursor_position') as any;
-          console.log('=== Navigation State ===');
-          console.log('Domains:', domains);
-          console.log('Cursor:', cursor);
-          
-          for (const domainId of domains) {
-            const domainInfo = await invoke('debug_domain', { domainId }) as any;
-            console.log(`Domain '${domainId}':`, {
-              buttons: domainInfo.buttons.map((b: any) => ({
-                id: b.id,
-                order: b.order,
-                enabled: b.enabled
-              })),
-              currentIndex: domainInfo.current_index,
-              layoutMode: domainInfo.layout_mode
-            });
+      const handleF11 = async (e: KeyboardEvent) => {
+        if (e.key === 'F11') {
+          e.preventDefault();
+          try {
+            await invoke('toggle_fullscreen');
+          } catch (error) {
+            console.error('Failed to toggle fullscreen:', error);
           }
-        } catch (error) {
-          console.error('Failed to get nav state:', error);
         }
-      }
-    };
+        
+        // Debug: 'X' key dumps navigation state (development only)
+        if (e.key.toLowerCase() === 'x' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+          e.preventDefault();
+          try {
+            const domains = await invoke('get_all_domains') as string[];
+            const cursor = await invoke('get_cursor_position') as any;
+            console.log('=== Navigation State ===');
+            console.log('Domains:', domains);
+            console.log('Cursor:', cursor);
+            
+            for (const domainId of domains) {
+              const domainInfo = await invoke('debug_domain', { domainId }) as any;
+              console.log(`Domain '${domainId}':`, {
+                buttons: domainInfo.buttons.map((b: any) => ({
+                  id: b.id,
+                  order: b.order,
+                  enabled: b.enabled
+                })),
+                currentIndex: domainInfo.current_index,
+                layoutMode: domainInfo.layout_mode
+              });
+            }
+          } catch (error) {
+            console.error('Failed to get nav state:', error);
+          }
+        }
+      };
 
-    window.addEventListener('keydown', handleF11);
-    
-    onCleanup(() => {
-      window.removeEventListener('keydown', handleF11);
-      f11HandlerRegistered = false;
-    });
+      window.addEventListener('keydown', handleF11);
+      
+      onCleanup(() => {
+        window.removeEventListener('keydown', handleF11);
+        f11HandlerRegistered = false;
+      });
+    }
+
+    // Manage global shortcuts registration based on window focus
+    if (!focusHandlersRegistered) {
+      focusHandlersRegistered = true;
+
+      const enableShortcuts = async () => {
+        try {
+          await invoke('set_global_shortcuts_enabled', { enabled: true });
+        } catch (error) {
+          console.error('Failed to enable global shortcuts:', error);
+        }
+      };
+
+      const disableShortcuts = async () => {
+        try {
+          await invoke('set_global_shortcuts_enabled', { enabled: false });
+        } catch (error) {
+          console.error('Failed to disable global shortcuts:', error);
+        }
+      };
+
+      // Enable on focus, disable on blur
+      window.addEventListener('focus', enableShortcuts);
+      window.addEventListener('blur', disableShortcuts);
+
+      // Ensure enabled on initial mount
+      enableShortcuts();
+
+      onCleanup(() => {
+        window.removeEventListener('focus', enableShortcuts);
+        window.removeEventListener('blur', disableShortcuts);
+        focusHandlersRegistered = false;
+      });
+    }
   });
 
   // Request initial cursor position from Rust after registrations complete
   onMount(async () => {
-    // Wait for components to register their domains/buttons
-    await new Promise(resolve => setTimeout(resolve, 200));
+    // Wait for components to register their domains/buttons/gates
+    await new Promise(resolve => setTimeout(resolve, 350));
     
     try {
       const emitted = await invoke('emit_cursor_position') as boolean;
       if (!emitted) {
-        console.warn('No initial cursor position - trying fallback');
-        const domains = await invoke('get_all_domains') as string[];
-        if (domains.length > 0) {
-          await invoke('set_active_domain', { domainId: domains[0] });
+        console.warn('No initial cursor position - setting OSbar as active');
+        
+        // Explicitly set OSbar as active domain (it should be first choice)
+        try {
+          await invoke('set_active_domain', { domainId: 'osbar-nav' });
           await invoke('emit_cursor_position');
+          console.log('Cursor initialized to OSbar');
+        } catch (osbarError) {
+          console.error('Failed to set OSbar active, trying fallback:', osbarError);
+          
+          // Ultimate fallback: any domain
+          const domains = await invoke('get_all_domains') as string[];
+          if (domains.length > 0) {
+            await invoke('set_active_domain', { domainId: domains[0] });
+            await invoke('emit_cursor_position');
+            console.log(`Cursor initialized to fallback domain: ${domains[0]}`);
+          }
         }
       }
     } catch (error) {
@@ -179,7 +248,13 @@ export default function Interface() {
   return (
     <>
       <OSbar_IC />
-      {/* Add other visual elements here as needed */}
+      <Compositor_IC 
+        leftContent={
+          <Window_IC>
+            <TESTING_DUMMY />
+          </Window_IC>
+        }
+      />
     </>
   );
 }

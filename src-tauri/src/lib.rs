@@ -442,6 +442,35 @@ fn process_activate(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigator>>) {
     }
 }
 
+/// Default shortcuts we want registered for navigation/activation
+fn default_shortcuts() -> Vec<Shortcut> {
+    vec![
+        Shortcut::new(Some(Modifiers::empty()), Code::KeyW),
+        Shortcut::new(Some(Modifiers::empty()), Code::KeyA),
+        Shortcut::new(Some(Modifiers::empty()), Code::KeyS),
+        Shortcut::new(Some(Modifiers::empty()), Code::KeyD),
+        Shortcut::new(Some(Modifiers::empty()), Code::Enter),
+        Shortcut::new(Some(Modifiers::empty()), Code::Space),
+    ]
+}
+
+/// Enable or disable global shortcuts (used to release bindings when window unfocused)
+#[tauri::command]
+fn set_global_shortcuts_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
+    if enabled {
+        for shortcut in default_shortcuts() {
+            app.global_shortcut()
+                .register(shortcut)
+                .map_err(|e| format!("Failed to register shortcut: {}", e))?;
+        }
+        Ok(())
+    } else {
+        app.global_shortcut()
+            .unregister_all()
+            .map_err(|e| format!("Failed to unregister shortcuts: {}", e))
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize domain navigator with Arc for sharing with shortcut handlers
@@ -452,13 +481,19 @@ pub fn run() {
         domain_navigator: navigator.clone(),
     };
 
-    // Define WASD shortcuts (no modifiers)
-    let shortcut_w = Shortcut::new(Some(Modifiers::empty()), Code::KeyW);
-    let shortcut_a = Shortcut::new(Some(Modifiers::empty()), Code::KeyA);
-    let shortcut_s = Shortcut::new(Some(Modifiers::empty()), Code::KeyS);
-    let shortcut_d = Shortcut::new(Some(Modifiers::empty()), Code::KeyD);
-    let shortcut_enter = Shortcut::new(Some(Modifiers::empty()), Code::Enter);
-    let shortcut_space = Shortcut::new(Some(Modifiers::empty()), Code::Space);
+    // Define shortcuts (no modifiers)
+    let [shortcut_w, shortcut_a, shortcut_s, shortcut_d, shortcut_enter, shortcut_space] = {
+        let mut list = default_shortcuts();
+        let mut iter = list.drain(..);
+        [
+            iter.next().unwrap(),
+            iter.next().unwrap(),
+            iter.next().unwrap(),
+            iter.next().unwrap(),
+            iter.next().unwrap(),
+            iter.next().unwrap(),
+        ]
+    };
 
     // Clone navigator for the shortcut handler closure
     let nav_for_handler = navigator.clone();
@@ -491,16 +526,7 @@ pub fn run() {
         .manage(app_state)
         .setup(|app| {
             // Register global shortcuts when app starts
-            let shortcuts = vec![
-                Shortcut::new(Some(Modifiers::empty()), Code::KeyW),
-                Shortcut::new(Some(Modifiers::empty()), Code::KeyA),
-                Shortcut::new(Some(Modifiers::empty()), Code::KeyS),
-                Shortcut::new(Some(Modifiers::empty()), Code::KeyD),
-                Shortcut::new(Some(Modifiers::empty()), Code::Enter),
-                Shortcut::new(Some(Modifiers::empty()), Code::Space),
-            ];
-
-            for shortcut in shortcuts {
+            for shortcut in default_shortcuts() {
                 if let Err(e) = app.global_shortcut().register(shortcut) {
                     eprintln!("Failed to register shortcut: {}", e);
                 }
@@ -533,6 +559,7 @@ pub fn run() {
             debug_domain,
             update_domain_layout,
             toggle_fullscreen,
+            set_global_shortcuts_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

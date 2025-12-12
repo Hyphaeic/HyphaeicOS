@@ -1,0 +1,74 @@
+/* Window Container - fills parent (SubContainer_Right) */
+.window {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background-color: #272727;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+
+/* Window Header - height matches OSbar width dimension */
+.window-header {
+  width: 100%;
+  height: calc(100vw / 27);
+  min-height: calc(100vw / 27);
+  max-height: calc(100vw / 27);
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  background: linear-gradient(270.5deg, rgba(152,45,255,1) 0.7%, rgba(90,241,255,1) 51.5%, rgba(65,239,164,1) 100.6%);
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+/* Domain container in window header */
+.window-header-domain {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 100%;
+  justify-content: flex-end;
+}
+
+/* Button subcontainers in header - matching OSbar pattern */
+.window-header-subcontainer {
+  width: calc(100vw / 27);
+  height: calc(100vw / 27);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* Dividers between buttons (horizontal layout) */
+.window-header-subcontainer-1::after,
+.window-header-subcontainer-2::after,
+.window-header-subcontainer-3::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Override button text color in header for visibility on gradient */
+.window-header .nav-button {
+  color: #ffffff;
+}
+
+/* Window Body - fills remaining space */
+.window-body {
+  width: 100%;
+  flex: 1;
+  overflow: auto;
+  background-color: #DECC9C;
+  box-sizing: border-box;
+}
+

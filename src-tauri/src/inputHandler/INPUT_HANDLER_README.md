@@ -4,7 +4,7 @@
 
 This is a domain-based keyboard navigation system for WASD-controlled cursor movement. It provides a visual cursor that moves between interactive elements within different UI "domains" (containers), with the ability to switch between domains via "gates".
 
-**Architecture**: **Rust-first** input capture. WASD/Enter/Space keys are captured at the OS level by Rust via `tauri-plugin-global-shortcut`. Navigation events are emitted directly from Rust to the frontend. The frontend **does not capture navigation keys** - it only listens for events.
+**Architecture**: **Rust-first** input capture. WASD/Enter/Space keys are captured at the OS level by Rust via `tauri-plugin-global-shortcut`. Navigation events are emitted directly from Rust to the frontend. The frontend **does not capture navigation keys** - it only listens for events. When the window blurs, global shortcuts are released so other apps can use these keys; they are re-registered on focus.
 
 ## Architecture
 
@@ -18,6 +18,7 @@ This is a domain-based keyboard navigation system for WASD-controlled cursor mov
 │  Keys captured by Rust at OS level:                                │
 │    W, A, S, D      → Navigation                                    │
 │    Enter, Space    → Activation (gate switch / button press)       │
+│    (Released on window blur, re-registered on focus)               │
 │                                                                     │
 │  Keys captured by Frontend (webview-specific):                     │
 │    F11             → Toggle fullscreen (requires webview API)      │

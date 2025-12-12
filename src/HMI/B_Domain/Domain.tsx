@@ -49,6 +49,8 @@ export default function Domain(props: DomainProps) {
   const [isReady, setIsReady] = createSignal(false);
 
   // Register domain with Rust backend on mount
+  // Note: First domain to register becomes active automatically in Rust
+  // We don't call set_active_domain() here to avoid race conditions
   onMount(async () => {
     try {
       await invoke('register_domain', {
@@ -60,14 +62,15 @@ export default function Domain(props: DomainProps) {
       
       console.log(`Domain '${props.id}' registered with layout: ${props.layoutMode}`);
       
-      // Set domain as active (first domain to register becomes active by default in Rust,
-      // but we explicitly set it to be sure)
-      await invoke('set_active_domain', { domainId: props.id });
-      console.log(`Domain '${props.id}' set as active`);
-      
       setIsReady(true);
     } catch (error) {
-      console.error(`Failed to register domain ${props.id}:`, error);
+      const msg = String(error);
+      if (msg.includes("already exists")) {
+         console.log(`Domain '${props.id}' already registered (skipping)`);
+         setIsReady(true);
+      } else {
+         console.error(`Failed to register domain ${props.id}:`, error);
+      }
     }
   });
 
