@@ -168,27 +168,8 @@ export default function Controller(props: ControllerProps) {
           const u1 = await listen<ElementActivatedPayload>('button-activate', (event) => {
             const { element_id } = event.payload;
             
-            // Map OSbar buttons to window spawning with source info
-            if (element_id === 'osbar-btn-1') {
-              invoke('spawn_window', { 
-                contentKey: 'TESTING_DUMMY',
-                sourceElementId: element_id,
-                sourceDomainId: 'osbar-nav'
-              }).catch(console.error);
-            } else if (element_id === 'osbar-btn-2') {
-              invoke('spawn_window', { 
-                contentKey: 'EMPTY_WINDOW_2',
-                sourceElementId: element_id,
-                sourceDomainId: 'osbar-nav'
-              }).catch(console.error);
-            } else if (element_id === 'osbar-btn-3') {
-              invoke('spawn_window', { 
-                contentKey: 'EMPTY_WINDOW_3',
-                sourceElementId: element_id,
-                sourceDomainId: 'osbar-nav'
-              }).catch(console.error);
-            }
-
+            // Trigger the click event on the DOM element
+            // The component's onClick handler will invoke the appropriate backend command
             const target = document.getElementById(element_id);
             if (target) {
               target.click();

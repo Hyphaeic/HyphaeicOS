@@ -467,6 +467,34 @@ fn get_cursor_position(state: State<AppState>) -> Result<serde_json::Value, Stri
     }
 }
 
+/// Set cursor position explicitly (e.g. from mouse hover)
+#[tauri::command]
+fn set_cursor_position(
+    domain_id: String,
+    element_id: String,
+    app: AppHandle,
+    state: State<AppState>
+) -> Result<(), String> {
+    let mut navigator = state.domain_navigator.lock()
+        .map_err(|e| format!("Failed to lock navigator: {}", e))?;
+
+    let element_type = navigator.set_cursor_position(&domain_id, &element_id)?;
+    
+    // Emit event so frontend updates (clearing previous focus)
+    let type_str = match element_type {
+        ElementType::Button => "Button",
+        ElementType::Gate => "Gate",
+    };
+    
+    let _ = app.emit("cursor-moved", CursorMovedPayload {
+        domain_id,
+        element_id,
+        element_type: type_str.to_string(),
+    });
+
+    Ok(())
+}
+
 /// Update domain layout mode
 #[tauri::command]
 fn update_domain_layout(
@@ -734,6 +762,7 @@ pub fn run() {
             switch_domain,
             get_cursor_position,
             emit_cursor_position,
+            set_cursor_position,
             get_all_domains,
             debug_domain,
             update_domain_layout,

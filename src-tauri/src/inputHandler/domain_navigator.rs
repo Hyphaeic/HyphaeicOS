@@ -291,6 +291,34 @@ impl DomainNavigator {
         self.active_domain_id.clone()
     }
 
+    /// Explicitly set the cursor position (e.g. from mouse hover)
+    pub fn set_cursor_position(&mut self, domain_id: &str, element_id: &str) -> Result<ElementType, String> {
+        // Verify domain exists
+        let domain = self.domains.get(domain_id)
+            .ok_or_else(|| format!("Domain '{}' not found", domain_id))?;
+
+        // Verify element exists and get its type
+        let element_type = if domain.buttons.iter().any(|b| b.id == element_id) {
+            ElementType::Button
+        } else if domain.gates.iter().any(|g| g.id == element_id) {
+            ElementType::Gate
+        } else {
+            return Err(format!("Element '{}' not found in domain '{}'", element_id, domain_id));
+        };
+
+        // Update active domain
+        self.active_domain_id = Some(domain_id.to_string());
+
+        // Update cursor position
+        self.cursor_position = Some(CursorPosition {
+            domain_id: domain_id.to_string(),
+            element_id: element_id.to_string(),
+            element_type: element_type.clone(),
+        });
+
+        Ok(element_type)
+    }
+
     /// Handle WASD input and navigate
     pub fn handle_wasd_input(&mut self, key: WASDKey) -> NavigationResult {
         let Some(active_domain_id) = self.active_domain_id.clone() else {

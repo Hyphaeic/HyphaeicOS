@@ -206,6 +206,29 @@ export default function Button_IC(props: ButtonProps) {
   };
 
   // =========================================================================
+  // MOUSE HOVER HANDLER (Syncs Rust cursor to Mouse)
+  // =========================================================================
+  
+  const handleMouseEnter = async () => {
+    // If we are already focused, do nothing
+    if (isFocused()) return;
+
+    const domainId = getDomainId();
+    if (!domainId) return;
+
+    try {
+      await invoke('set_cursor_position', {
+        domainId: domainId,
+        elementId: props.id
+      });
+      // The Rust backend will emit 'cursor-moved', which our handleFocus listener
+      // (in onMount) will catch, setting isFocused(true) and unsetting others.
+    } catch (error) {
+      console.warn(`[Button_IC] Failed to set cursor on hover:`, error);
+    }
+  };
+
+  // =========================================================================
   // RENDER
   // =========================================================================
   
@@ -224,6 +247,7 @@ export default function Button_IC(props: ButtonProps) {
       id={props.id}
       tabIndex={-1}
       onMouseDown={(e) => e.preventDefault()}
+      onMouseEnter={handleMouseEnter}
       class={getClassName()}
       onClick={handleClick}
       data-button-id={props.id}

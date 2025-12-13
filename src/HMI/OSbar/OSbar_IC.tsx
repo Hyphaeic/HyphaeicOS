@@ -70,7 +70,14 @@ export default function OSbar_IC() {
           <Button_IC
             id="osbar-btn-1"
             order={0}
-            onClick={() => console.log("Button 1 clicked")}
+            onClick={() => {
+              console.log("Button 1 clicked");
+              invoke('spawn_window', { 
+                contentKey: 'TESTING_DUMMY',
+                sourceElementId: 'osbar-btn-1',
+                sourceDomainId: 'osbar-nav'
+              }).catch(console.error);
+            }}
           >
             <span>1</span>
           </Button_IC>
@@ -81,7 +88,14 @@ export default function OSbar_IC() {
           <Button_IC
             id="osbar-btn-2"
             order={1}
-            onClick={() => console.log("Button 2 clicked")}
+            onClick={() => {
+              console.log("Button 2 clicked");
+              invoke('spawn_window', { 
+                contentKey: 'EMPTY_WINDOW_2',
+                sourceElementId: 'osbar-btn-2',
+                sourceDomainId: 'osbar-nav'
+              }).catch(console.error);
+            }}
           >
             <span>2</span>
           </Button_IC>
@@ -92,7 +106,14 @@ export default function OSbar_IC() {
           <Button_IC
             id="osbar-btn-3"
             order={2}
-            onClick={() => console.log("Button 3 clicked")}
+            onClick={() => {
+              console.log("Button 3 clicked");
+              invoke('spawn_window', { 
+                contentKey: 'EMPTY_WINDOW_3',
+                sourceElementId: 'osbar-btn-3',
+                sourceDomainId: 'osbar-nav'
+              }).catch(console.error);
+            }}
           >
             <span>3</span>
           </Button_IC>
