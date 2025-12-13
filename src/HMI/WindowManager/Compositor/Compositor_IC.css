@@ -18,18 +18,48 @@
   box-sizing: border-box;
   position: relative;
   padding: calc(100vw / 27);
+  /* Allow width to shrink below content size */
+  min-width: 0;
+  flex-shrink: 0;
+  /* Smooth width animation for maximize/minimize */
+  /* Animate width, opacity, and horizontal padding together */
+  transition: width 0.33s ease-in-out, 
+              opacity 0.33s ease-in-out, 
+              padding-left 0.33s ease-in-out, 
+              padding-right 0.33s ease-in-out;
 }
 
-/* Left subcontainer - compositional only (transparent) */
+/* Left subcontainer - first window slot */
 .compositor-subcontainer-left {
   background-color: transparent;
+  display: flex;
+  flex-direction: column;
 }
 
-/* Right subcontainer - compositional only (transparent) */
+/* Right subcontainer - second window slot */
 .compositor-subcontainer-right {
   background-color: transparent;
   display: flex;
   flex-direction: column;
+}
+
+/* Maximized state - subcontainer takes full width */
+.compositor-subcontainer-maximized {
+  width: 100%;
+}
+
+/* Hidden state - other subcontainer when one is maximized */
+.compositor-subcontainer-hidden {
+  width: 0;
+  min-width: 0;
+  opacity: 0;
+  /* Keep in DOM but hidden for smooth transitions */
+  overflow: hidden;
+  /* Remove padding when hidden to prevent layout jump */
+  padding-left: 0;
+  padding-right: 0;
+  /* Pointer events none so it doesn't block anything */
+  pointer-events: none;
 }
 
 /* Mobile mode - Portrait/Square (aspect ratio ≤ 1:1) */
@@ -48,4 +78,3 @@
     padding: calc(100vw / 27);
   }
 }
-

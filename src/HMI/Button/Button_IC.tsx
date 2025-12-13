@@ -171,18 +171,15 @@ export default function Button_IC(props: ButtonProps) {
       };
 
       try {
-        await invoke('unregister_button', {
-          domainId: domainId,
-          buttonId: props.id
-        });
-        await invoke('register_button', {
+        // Use update_button_bounds instead of unregister/re-register
+        // This preserves cursor state and is much simpler
+        await invoke('update_button_bounds', {
           domainId: domainId,
           buttonId: props.id,
-          bounds,
-          order: props.order
+          bounds
         });
       } catch {
-        // Silently ignore
+        // Silently ignore - button may have been unregistered
       }
     };
 

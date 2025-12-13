@@ -1,4 +1,4 @@
-/* Window Container - fills parent (SubContainer_Right) */
+/* Window Container - fills parent slot */
 .window {
   width: 100%;
   height: 100%;
@@ -6,6 +6,19 @@
   flex-direction: column;
   background-color: #272727;
   overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  /* Smooth transitions for any property changes */
+  transition: all 0.33s ease-in-out;
+}
+
+/* Minimized window - half size in slot */
+.window-minimized {
+  /* Default state - fills slot container */
+}
+
+/* Maximized window - full compositor */
+.window-maximized {
+  /* Full size - handled by compositor-maximized container */
 }
 
 /* Window Header - height matches OSbar width dimension */
@@ -22,13 +35,32 @@
   flex-shrink: 0;
 }
 
-/* Domain container in window header */
+/* Title bar - fills space before buttons */
+.window-title-bar {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  overflow: hidden;
+}
+
+.window-title {
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+/* Domain container in window header - holds buttons */
 .window-header-domain {
   display: flex;
   flex-direction: row;
-  width: 100%;
   height: 100%;
   justify-content: flex-end;
+  flex-shrink: 0;
 }
 
 /* Button subcontainers in header - matching OSbar pattern */
@@ -44,6 +76,12 @@
   position: relative;
 }
 
+/* Button icons */
+.window-btn-icon {
+  font-size: 18px;
+  font-weight: bold;
+  line-height: 1;
+}
 
 /* Override button text color in header for visibility on gradient */
 .window-header .nav-button {
@@ -59,3 +97,16 @@
   box-sizing: border-box;
 }
 
+/* Mobile mode adjustments */
+@media (max-aspect-ratio: 1/1) {
+  .window-header {
+    height: calc(100vh / 9);
+    min-height: calc(100vh / 9);
+    max-height: calc(100vh / 9);
+  }
+
+  .window-header-subcontainer {
+    width: calc(100vh / 9);
+    height: calc(100vh / 9);
+  }
+}

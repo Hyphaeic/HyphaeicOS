@@ -9,6 +9,11 @@ pub struct DomainNavigator {
     domains: HashMap<String, Domain>,
     active_domain_id: Option<String>,
     cursor_position: Option<CursorPosition>,
+    /// Saved cursor positions for domains that were unregistered
+    /// Used to restore cursor when domain re-registers (e.g., window state change)
+    saved_cursor_positions: HashMap<String, CursorPosition>,
+    /// Saved active domain ID when it gets unregistered
+    saved_active_domain: Option<String>,
 }
 
 impl DomainNavigator {
@@ -17,6 +22,8 @@ impl DomainNavigator {
             domains: HashMap::new(),
             active_domain_id: None,
             cursor_position: None,
+            saved_cursor_positions: HashMap::new(),
+            saved_active_domain: None,
         }
     }
 
@@ -34,8 +41,20 @@ impl DomainNavigator {
         let domain = Domain::new(domain_id.clone(), parent_id, layout_mode);
         self.domains.insert(domain_id.clone(), domain);
 
-        // If this is the first domain, make it active
-        if self.active_domain_id.is_none() {
+        // Check if this domain was previously active and restore it
+        if self.saved_active_domain.as_ref() == Some(&domain_id) {
+            self.active_domain_id = Some(domain_id.clone());
+            self.saved_active_domain = None;
+            
+            // Restore cursor position if we have one saved
+            if let Some(saved_cursor) = self.saved_cursor_positions.remove(&domain_id) {
+                // Don't set cursor yet - wait for buttons to register
+                // Store it back temporarily until buttons are registered
+                self.saved_cursor_positions.insert(domain_id.clone(), saved_cursor);
+            }
+        }
+        // If this is the first domain and no active domain, make it active
+        else if self.active_domain_id.is_none() {
             self.active_domain_id = Some(domain_id);
         }
 
@@ -44,17 +63,33 @@ impl DomainNavigator {
 
     /// Unregister a domain
     pub fn unregister_domain(&mut self, domain_id: &str) -> Result<(), String> {
+        println!("[UNREGISTER_DOMAIN] domain: {}", domain_id);
+        
         if !self.domains.contains_key(domain_id) {
             return Err(format!("Domain '{}' not found", domain_id));
         }
 
-        // If this was the active domain, clear active state
+        // If cursor was in this domain, save it for restoration
+        if let Some(cursor) = &self.cursor_position {
+            if cursor.domain_id == domain_id {
+                self.saved_cursor_positions.insert(domain_id.to_string(), cursor.clone());
+            }
+        }
+
+        // If this was the active domain, save it and clear active state
         if self.active_domain_id.as_ref() == Some(&domain_id.to_string()) {
+            self.saved_active_domain = Some(domain_id.to_string());
             self.active_domain_id = None;
             self.cursor_position = None;
         }
 
         self.domains.remove(domain_id);
+        
+        // Clean up saved cursor for this domain since it no longer exists
+        // This prevents stale entries from causing issues
+        self.saved_cursor_positions.remove(domain_id);
+        println!("[UNREGISTER_DOMAIN] Cleaned up saved cursor, remaining: {:?}", self.saved_cursor_positions.keys().collect::<Vec<_>>());
+        
         Ok(())
     }
 
@@ -66,6 +101,11 @@ impl DomainNavigator {
         bounds: Option<Rect>,
         order: usize,
     ) -> Result<(), String> {
+        println!("[REGISTER_BUTTON] domain: {}, button: {}, order: {}", domain_id, button_id, order);
+        println!("[REGISTER_BUTTON] Active domain: {:?}", self.active_domain_id);
+        println!("[REGISTER_BUTTON] Current cursor: {:?}", self.cursor_position);
+        println!("[REGISTER_BUTTON] Saved cursors: {:?}", self.saved_cursor_positions);
+        
         let domain = self.domains.get_mut(&domain_id)
             .ok_or_else(|| format!("Domain '{}' not found", domain_id))?;
 
@@ -86,46 +126,93 @@ impl DomainNavigator {
         // Sort buttons by order
         domain.buttons.sort_by_key(|b| b.order);
 
-        // If this is the first element in the active domain, set cursor to it
-        if self.active_domain_id.as_ref() == Some(&domain_id) 
-            && self.cursor_position.is_none() 
-            && domain.element_count() == 1 {
-            self.cursor_position = Some(CursorPosition {
-                domain_id: domain_id.clone(),
-                element_id: button_id,
-                element_type: ElementType::Button,
-            });
+        println!("[REGISTER_BUTTON] Domain now has {} buttons", domain.buttons.len());
+
+        // Check if we have a saved cursor position for this domain
+        if self.active_domain_id.as_ref() == Some(&domain_id) {
+            if let Some(saved_cursor) = self.saved_cursor_positions.get(&domain_id) {
+                println!("[REGISTER_BUTTON] Found saved cursor: {:?}", saved_cursor);
+                // If this is the button we were on, restore cursor
+                if saved_cursor.element_id == button_id {
+                    println!("[REGISTER_BUTTON] ✓ RESTORING cursor to {}", button_id);
+                    self.cursor_position = Some(CursorPosition {
+                        domain_id: domain_id.clone(),
+                        element_id: button_id.clone(),
+                        element_type: ElementType::Button,
+                    });
+                    // Remove saved cursor since we've restored it
+                    self.saved_cursor_positions.remove(&domain_id);
+                    return Ok(());
+                } else {
+                    // There's a saved cursor waiting for a different button
+                    // Don't set cursor to first element - wait for the correct button to register
+                    println!("[REGISTER_BUTTON] Saved cursor exists for different button, waiting...");
+                    return Ok(());
+                }
+            }
+            
+            // If no cursor position and no saved cursor and this is the first element, set cursor to it
+            if self.cursor_position.is_none() && domain.element_count() == 1 {
+                println!("[REGISTER_BUTTON] ✓ Setting cursor to first element: {}", button_id);
+                self.cursor_position = Some(CursorPosition {
+                    domain_id: domain_id.clone(),
+                    element_id: button_id,
+                    element_type: ElementType::Button,
+                });
+            }
         }
 
+        println!("[REGISTER_BUTTON] Final cursor: {:?}", self.cursor_position);
         Ok(())
     }
 
     /// Unregister a button
     pub fn unregister_button(&mut self, domain_id: &str, button_id: &str) -> Result<(), String> {
+        println!("[UNREGISTER_BUTTON] domain: {}, button: {}", domain_id, button_id);
+        println!("[UNREGISTER_BUTTON] Current cursor: {:?}", self.cursor_position);
+        
         let domain = self.domains.get_mut(domain_id)
             .ok_or_else(|| format!("Domain '{}' not found", domain_id))?;
 
         let index = domain.buttons.iter().position(|b| b.id == button_id)
             .ok_or_else(|| format!("Button '{}' not found in domain '{}'", button_id, domain_id))?;
 
-        domain.buttons.remove(index);
-
-        // If cursor was on this button, move to nearest element
+        // If cursor was on this button, save it for restoration when button re-registers
+        // (e.g., during resize, window state change, etc.)
         if let Some(cursor) = &self.cursor_position {
             if cursor.domain_id == domain_id && cursor.element_id == button_id {
-                // Try to move to next element or previous
-                if let Some((element_type, element_id)) = domain.get_element_at_index(index.min(domain.element_count().saturating_sub(1))) {
-                    self.cursor_position = Some(CursorPosition {
-                        domain_id: domain_id.to_string(),
-                        element_id,
-                        element_type,
-                    });
-                } else {
-                    self.cursor_position = None;
-                }
+                println!("[UNREGISTER_BUTTON] ✓ SAVING cursor position for {}", button_id);
+                // Save cursor position for this domain
+                self.saved_cursor_positions.insert(domain_id.to_string(), cursor.clone());
+                // Clear current cursor since button no longer exists
+                // It will be restored when button re-registers
+                self.cursor_position = None;
             }
         }
 
+        domain.buttons.remove(index);
+        println!("[UNREGISTER_BUTTON] Domain now has {} buttons", domain.buttons.len());
+        println!("[UNREGISTER_BUTTON] Saved cursors: {:?}", self.saved_cursor_positions);
+
+        Ok(())
+    }
+
+    /// Update button bounds without unregistering (used during resize)
+    /// This avoids the cursor save/restore dance and is much simpler
+    pub fn update_button_bounds(
+        &mut self,
+        domain_id: &str,
+        button_id: &str,
+        bounds: Option<Rect>,
+    ) -> Result<(), String> {
+        let domain = self.domains.get_mut(domain_id)
+            .ok_or_else(|| format!("Domain '{}' not found", domain_id))?;
+
+        let button = domain.buttons.iter_mut()
+            .find(|b| b.id == button_id)
+            .ok_or_else(|| format!("Button '{}' not found in domain '{}'", button_id, domain_id))?;
+
+        button.bounds = bounds;
         Ok(())
     }
 
@@ -507,6 +594,44 @@ mod tests {
         // Try to go past end - should hit boundary
         let result = nav.handle_wasd_input(WASDKey::S);
         assert!(matches!(result, NavigationResult::BoundaryReached));
+    }
+
+    #[test]
+    fn test_button_unregister_reregister_preserves_cursor() {
+        let mut nav = DomainNavigator::new();
+        
+        nav.register_domain(
+            "test-domain".to_string(),
+            None,
+            LayoutMode::List { direction: ListDirection::Horizontal },
+        ).unwrap();
+
+        // Add 3 buttons (like window header buttons: minimize, maximize, close)
+        nav.register_button("test-domain".to_string(), "btn-min".to_string(), None, 0).unwrap();
+        nav.register_button("test-domain".to_string(), "btn-max".to_string(), None, 1).unwrap();
+        nav.register_button("test-domain".to_string(), "btn-close".to_string(), None, 2).unwrap();
+
+        // Navigate to middle button (maximize)
+        nav.handle_wasd_input(WASDKey::D);
+        let cursor = nav.get_cursor_position().unwrap();
+        assert_eq!(cursor.element_id, "btn-max");
+
+        // Simulate resize: unregister all buttons
+        nav.unregister_button("test-domain", "btn-min").unwrap();
+        nav.unregister_button("test-domain", "btn-max").unwrap();
+        nav.unregister_button("test-domain", "btn-close").unwrap();
+
+        // Cursor should be cleared after unregistering the focused button
+        assert!(nav.get_cursor_position().is_none());
+
+        // Re-register all buttons (simulating re-registration after resize)
+        nav.register_button("test-domain".to_string(), "btn-min".to_string(), None, 0).unwrap();
+        nav.register_button("test-domain".to_string(), "btn-max".to_string(), None, 1).unwrap();
+        nav.register_button("test-domain".to_string(), "btn-close".to_string(), None, 2).unwrap();
+
+        // Cursor should be restored to the maximize button
+        let cursor = nav.get_cursor_position().unwrap();
+        assert_eq!(cursor.element_id, "btn-max", "Cursor should be restored to the same button after re-registration");
     }
 }
 

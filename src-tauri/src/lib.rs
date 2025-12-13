@@ -6,8 +6,13 @@ mod asset_loader;
 #[path = "inputHandler/mod.rs"]
 mod input_handler;
 
+// State management module
+mod state;
+
 use asset_loader::{clear_asset_cache, get_asset_cache_path, is_asset_cached, load_asset};
 use input_handler::{DomainNavigator, LayoutMode, ListDirection, GateDirection, Rect, WASDKey, NavigationResult, ElementType};
+use state::StateManager;
+use state::window::{WindowInstance, WindowState};
 use std::sync::{Mutex, Arc};
 use tauri::{State, Manager, AppHandle, Emitter};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -48,6 +53,83 @@ struct AppState {
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+// ===== Window Management Commands =====
+
+#[tauri::command]
+fn spawn_window(
+    content_key: String,
+    source_element_id: Option<String>,
+    source_domain_id: Option<String>,
+    app: AppHandle,
+    state: State<Mutex<StateManager>>,
+) -> Result<WindowInstance, String> {
+    let mut manager = state.lock().map_err(|e| e.to_string())?;
+    
+    match manager.spawn_window(content_key, source_element_id, source_domain_id) {
+        Some(window) => {
+            // Emit event
+            app.emit("window-created", window.clone())
+                .map_err(|e| e.to_string())?;
+            Ok(window)
+        }
+        None => Err("No available slots - both compositor slots are occupied".to_string())
+    }
+}
+
+#[tauri::command]
+fn close_window(
+    id: String,
+    app: AppHandle,
+    state: State<Mutex<StateManager>>,
+) -> Result<(), String> {
+    let mut manager = state.lock().map_err(|e| e.to_string())?;
+    let closed_window = manager.close_window(&id);
+    
+    // Emit event
+    app.emit("window-closed", id)
+        .map_err(|e| e.to_string())?;
+    
+    // If window had a source element, try to return focus to it
+    if let Some(win) = closed_window {
+        if let (Some(source_domain), Some(source_element)) = (win.source_domain_id, win.source_element_id) {
+            // We use a small delay to ensure the DOM update has processed the window removal
+            // This is handled via event emission to the frontend controller
+            app.emit("return-focus", CursorMovedPayload {
+                domain_id: source_domain,
+                element_id: source_element,
+                element_type: "Button".to_string(), // Assuming button triggered it
+            }).map_err(|e| e.to_string())?;
+        }
+    }
+        
+    Ok(())
+}
+
+#[tauri::command]
+fn set_window_state(
+    id: String,
+    window_state: String,
+    app: AppHandle,
+    state: State<Mutex<StateManager>>,
+) -> Result<(), String> {
+    let new_state = match window_state.as_str() {
+        "Minimized" => WindowState::Minimized,
+        "Maximized" => WindowState::Maximized,
+        "Hidden" => WindowState::Hidden,
+        _ => return Err(format!("Invalid window state: {}", window_state)),
+    };
+
+    let mut manager = state.lock().map_err(|e| e.to_string())?;
+    
+    if let Some(window) = manager.set_window_state(&id, new_state) {
+        app.emit("window-state-changed", window)
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    } else {
+        Err(format!("Window not found: {}", id))
+    }
 }
 
 // ===== Domain Navigation Commands =====
@@ -97,12 +179,49 @@ fn register_button(
     button_id: String,
     bounds: Option<Rect>,
     order: usize,
+    app: AppHandle,
     state: State<AppState>,
 ) -> Result<(), String> {
+    println!("[TAURI CMD] register_button called: domain={}, button={}, order={}", domain_id, button_id, order);
+    
     let mut navigator = state.domain_navigator.lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
-    navigator.register_button(domain_id, button_id, bounds, order)
+    // Get cursor position before registration
+    let cursor_before = navigator.get_cursor_position();
+    println!("[TAURI CMD] Cursor before: {:?}", cursor_before);
+
+    // Register the button
+    navigator.register_button(domain_id.clone(), button_id.clone(), bounds, order)?;
+
+    // Check if cursor was restored (position changed to this button)
+    let cursor_after = navigator.get_cursor_position();
+    println!("[TAURI CMD] Cursor after: {:?}", cursor_after);
+    
+    if let Some(cursor) = &cursor_after {
+        // If cursor changed and is now on this button, emit event
+        let cursor_changed = match &cursor_before {
+            Some(before) => before.element_id != cursor.element_id || before.domain_id != cursor.domain_id,
+            None => true,
+        };
+        
+        println!("[TAURI CMD] Cursor changed: {}, matches button: {}", cursor_changed, cursor.element_id == button_id);
+        
+        if cursor_changed && cursor.element_id == button_id && cursor.domain_id == domain_id {
+            println!("[TAURI CMD] ✓ EMITTING cursor-moved event for {}", button_id);
+            let type_str = match cursor.element_type {
+                ElementType::Button => "Button",
+                ElementType::Gate => "Gate",
+            };
+            let _ = app.emit("cursor-moved", CursorMovedPayload {
+                domain_id: cursor.domain_id.clone(),
+                element_id: cursor.element_id.clone(),
+                element_type: type_str.to_string(),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 /// Unregister a button
@@ -112,10 +231,26 @@ fn unregister_button(
     button_id: String,
     state: State<AppState>,
 ) -> Result<(), String> {
+    println!("[TAURI CMD] unregister_button called: domain={}, button={}", domain_id, button_id);
+    
     let mut navigator = state.domain_navigator.lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     navigator.unregister_button(&domain_id, &button_id)
+}
+
+/// Update button bounds without unregistering (used during resize)
+#[tauri::command]
+fn update_button_bounds(
+    domain_id: String,
+    button_id: String,
+    bounds: Option<Rect>,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let mut navigator = state.domain_navigator.lock()
+        .map_err(|e| format!("Failed to lock navigator: {}", e))?;
+
+    navigator.update_button_bounds(&domain_id, &button_id, bounds)
 }
 
 /// Register a gate within a domain
@@ -544,6 +679,7 @@ pub fn run() {
                 .build(),
         )
         .manage(app_state)
+        .manage(Mutex::new(StateManager::new()))
         .setup(|_app| {
             // NOTE: Shortcuts are NOT registered here anymore.
             // Frontend controls registration via set_global_shortcuts_enabled()
@@ -558,11 +694,16 @@ pub fn run() {
             clear_asset_cache,
             is_asset_cached,
             get_asset_cache_path,
+            // Window management commands
+            spawn_window,
+            close_window,
+            set_window_state,
             // Domain navigation commands
             register_domain,
             unregister_domain,
             register_button,
             unregister_button,
+            update_button_bounds,
             register_gate,
             unregister_gate,
             set_active_domain,

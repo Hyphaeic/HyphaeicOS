@@ -1,6 +1,8 @@
 import { onMount, onCleanup, JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { addWindow, removeWindow, updateWindow, WindowInstance } from "../store";
+import { findNavigationTarget } from "./navigation_helpers";
 
 // ============================================================================
 // CONTROLLER - The Centralized Input Hub (HMR-Safe Singleton)
@@ -36,6 +38,22 @@ interface DomainSwitchedPayload {
 interface BoundaryReachedPayload {
   direction: string;
 }
+
+// Window action types for external triggering
+export type WindowAction = "minimize" | "maximize" | "close";
+
+// Exposed functions for triggering window actions externally (keybindings, etc.)
+export const windowActions = {
+  minimize: (windowId: string) => {
+    invoke('set_window_state', { id: windowId, windowState: 'Minimized' }).catch(console.error);
+  },
+  maximize: (windowId: string) => {
+    invoke('set_window_state', { id: windowId, windowState: 'Maximized' }).catch(console.error);
+  },
+  close: (windowId: string) => {
+    invoke('close_window', { id: windowId }).catch(console.error);
+  },
+};
 
 interface ControllerProps {
   children?: JSX.Element;
@@ -149,6 +167,28 @@ export default function Controller(props: ControllerProps) {
           // Activation (Rust -> DOM Click)
           const u1 = await listen<ElementActivatedPayload>('button-activate', (event) => {
             const { element_id } = event.payload;
+            
+            // Map OSbar buttons to window spawning with source info
+            if (element_id === 'osbar-btn-1') {
+              invoke('spawn_window', { 
+                contentKey: 'TESTING_DUMMY',
+                sourceElementId: element_id,
+                sourceDomainId: 'osbar-nav'
+              }).catch(console.error);
+            } else if (element_id === 'osbar-btn-2') {
+              invoke('spawn_window', { 
+                contentKey: 'EMPTY_WINDOW_2',
+                sourceElementId: element_id,
+                sourceDomainId: 'osbar-nav'
+              }).catch(console.error);
+            } else if (element_id === 'osbar-btn-3') {
+              invoke('spawn_window', { 
+                contentKey: 'EMPTY_WINDOW_3',
+                sourceElementId: element_id,
+                sourceDomainId: 'osbar-nav'
+              }).catch(console.error);
+            }
+
             const target = document.getElementById(element_id);
             if (target) {
               target.click();
@@ -158,11 +198,46 @@ export default function Controller(props: ControllerProps) {
           });
           state.tauriUnlisteners.push(u1);
 
+          // Window Created
+          const u6 = await listen<WindowInstance>('window-created', (event) => {
+            addWindow(event.payload);
+          });
+          state.tauriUnlisteners.push(u6);
+
+          // Window Closed
+          const u7 = await listen<string>('window-closed', (event) => {
+            removeWindow(event.payload);
+          });
+          state.tauriUnlisteners.push(u7);
+
+          // Window State Changed
+          const u8 = await listen<WindowInstance>('window-state-changed', (event) => {
+            updateWindow(event.payload);
+          });
+          state.tauriUnlisteners.push(u8);
+
           // Focus (Rust -> DOM Event)
           const u2 = await listen<CursorMovedPayload>('cursor-moved', (event) => {
             window.dispatchEvent(new CustomEvent('sys-cursor-move', { detail: event.payload }));
           });
           state.tauriUnlisteners.push(u2);
+
+          // Return Focus (when window closed)
+          const u9 = await listen<CursorMovedPayload>('return-focus', async (event) => {
+            try {
+              // Wait for DOM updates to process window removal
+              await new Promise(r => setTimeout(r, 50));
+              
+              // Set active domain first
+              await invoke('set_active_domain', { domainId: event.payload.domain_id });
+              
+              // Then emit cursor position to trigger visual update
+              await invoke('emit_cursor_position');
+            } catch (e) {
+              console.error('[Controller] Failed to return focus:', e);
+            }
+          });
+          state.tauriUnlisteners.push(u9);
 
           // Gate
           const u3 = await listen<AtGatePayload>('at-gate', (event) => {
@@ -181,12 +256,15 @@ export default function Controller(props: ControllerProps) {
             window.dispatchEvent(new CustomEvent('boundary-reached', { detail: event.payload }));
             try {
               const activeDomain = await invoke('get_active_domain') as string | null;
-              if (activeDomain === 'osbar-nav' && event.payload.direction === 'right') {
-                await invoke('set_active_domain', { domainId: 'window-header-nav' });
-                await invoke('emit_cursor_position');
-              } else if (activeDomain === 'window-header-nav' && event.payload.direction === 'left') {
-                await invoke('set_active_domain', { domainId: 'osbar-nav' });
-                await invoke('emit_cursor_position');
+              
+              if (activeDomain) {
+                const domains = await invoke('get_all_domains') as string[];
+                const targetDomain = await findNavigationTarget(event.payload.direction, activeDomain, domains);
+                
+                if (targetDomain) {
+                  await invoke('set_active_domain', { domainId: targetDomain });
+                  await invoke('emit_cursor_position');
+                }
               }
             } catch (error) {
               console.error('[Controller] Boundary handler error:', error);
