@@ -66,32 +66,32 @@ export default function Interface() {
       <Compositor_IC 
         maximizedWindow={maximizedWindow()}
         leftContent={
-          // Always render window if it exists - CSS handles visibility
-          // This prevents unmounting which causes Domain/Button registration issues
-          <Show when={leftWindow()} keyed>
+          // Render window without keyed to prevent recreation
+          // Window_IC will handle its own state preservation
+          <Show when={leftWindow()}>
             {(win) => (
               <Window_IC 
-                id={win.id} 
-                title={win.title} 
-                windowState={win.state}
-                contentKey={win.content_key}
+                id={win().id} 
+                title={win().title} 
+                windowState={win().state}
+                contentKey={win().content_key}
               >
-                <WindowContent win={win} />
+                <WindowContent win={win()} />
               </Window_IC>
             )}
           </Show>
         }
         rightContent={
-          // Always render window if it exists - CSS handles visibility
-          <Show when={rightWindow()} keyed>
+          // Render window without keyed to prevent recreation
+          <Show when={rightWindow()}>
             {(win) => (
               <Window_IC 
-                id={win.id} 
-                title={win.title} 
-                windowState={win.state}
-                contentKey={win.content_key}
+                id={win().id} 
+                title={win().title} 
+                windowState={win().state}
+                contentKey={win().content_key}
               >
-                <WindowContent win={win} />
+                <WindowContent win={win()} />
               </Window_IC>
             )}
           </Show>

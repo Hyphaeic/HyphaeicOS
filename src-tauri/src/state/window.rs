@@ -8,6 +8,8 @@ pub enum WindowState {
     Maximized,
     /// Window is hidden (not rendered)
     Hidden,
+    /// Window is playing closing animation (will become Hidden after animation)
+    Closing,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq)]

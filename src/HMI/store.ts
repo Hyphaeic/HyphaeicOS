@@ -1,7 +1,7 @@
 import { createStore } from "solid-js/store";
 
 export type CompositorSlot = "Left" | "Right";
-export type WindowState = "Minimized" | "Maximized" | "Hidden";
+export type WindowState = "Minimized" | "Maximized" | "Hidden" | "Closing";
 
 export interface WindowInstance {
   id: string;

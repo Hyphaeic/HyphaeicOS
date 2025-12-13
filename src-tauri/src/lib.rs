@@ -85,6 +85,26 @@ fn close_window(
     state: State<Mutex<StateManager>>,
 ) -> Result<(), String> {
     let mut manager = state.lock().map_err(|e| e.to_string())?;
+    
+    // First, set window state to Closing (triggers animation)
+    if let Some(window) = manager.set_window_state(&id, WindowState::Closing) {
+        // Emit state change event so frontend updates
+        app.emit("window-state-changed", window)
+            .map_err(|e| e.to_string())?;
+    } else {
+        return Err(format!("Window {} not found", id));
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+fn remove_window(
+    id: String,
+    app: AppHandle,
+    state: State<Mutex<StateManager>>,
+) -> Result<(), String> {
+    let mut manager = state.lock().map_err(|e| e.to_string())?;
     let closed_window = manager.close_window(&id);
     
     // Emit event
@@ -118,6 +138,7 @@ fn set_window_state(
         "Minimized" => WindowState::Minimized,
         "Maximized" => WindowState::Maximized,
         "Hidden" => WindowState::Hidden,
+        "Closing" => WindowState::Closing,
         _ => return Err(format!("Invalid window state: {}", window_state)),
     };
 
@@ -697,6 +718,7 @@ pub fn run() {
             // Window management commands
             spawn_window,
             close_window,
+            remove_window,
             set_window_state,
             // Domain navigation commands
             register_domain,

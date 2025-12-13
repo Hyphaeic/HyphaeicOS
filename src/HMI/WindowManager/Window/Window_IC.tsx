@@ -1,5 +1,6 @@
 import "./Window_IC.css";
-import { JSXElement, Show } from "solid-js";
+import { JSXElement, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
 import Domain from "../../A_Domain/Domain";
 import Button_IC from "../../Button/Button_IC";
 import { windowActions } from "../../A_Controller/Controller";
@@ -25,10 +26,60 @@ interface WindowProps {
  * States:
  * - Minimized: Half-size window in assigned slot
  * - Maximized: Full-size window spanning entire compositor
+ * - Closing: Window is animating out (will be removed after animation)
  * - Hidden: Not rendered
  */
 export default function Window_IC(props: WindowProps) {
   const isMaximized = () => props.windowState === "Maximized";
+  
+  // Local closing state that persists across prop changes
+  // Once set to true, it stays true until component unmounts
+  const [localIsClosing, setLocalIsClosing] = createSignal(false);
+  
+  // Track if window has started closing
+  createEffect(() => {
+    if (props.windowState === "Closing" && !localIsClosing()) {
+      setLocalIsClosing(true);
+    }
+  });
+  
+  const isClosing = () => localIsClosing();
+
+  let windowRef: HTMLDivElement | undefined;
+  let animationEndHandler: ((e: AnimationEvent) => void) | undefined;
+
+  // Set up animation end listener
+  onMount(() => {
+    animationEndHandler = (e: AnimationEvent) => {
+      // Only handle the fadeOutBlur animation (not fadeInBlur)
+      if (e.animationName === 'fadeOutBlur' && isClosing()) {
+        // Animation completed, now remove the window
+        invoke('remove_window', { id: props.id }).catch(console.error);
+      }
+    };
+
+    if (windowRef) {
+      windowRef.addEventListener('animationend', animationEndHandler as EventListener);
+    }
+
+    onCleanup(() => {
+      if (windowRef && animationEndHandler) {
+        windowRef.removeEventListener('animationend', animationEndHandler as EventListener);
+      }
+    });
+  });
+
+  // Fallback timeout in case animationend doesn't fire
+  createEffect(() => {
+    if (isClosing()) {
+      const fallbackTimeout = setTimeout(() => {
+        console.warn('[Window_IC] Animation fallback triggered for', props.id);
+        invoke('remove_window', { id: props.id }).catch(console.error);
+      }, 500); // Slightly longer than animation duration as fallback
+
+      onCleanup(() => clearTimeout(fallbackTimeout));
+    }
+  });
 
   // Action handlers - exposed for external triggering (keybindings)
   const handleMinimize = () => {
@@ -45,13 +96,15 @@ export default function Window_IC(props: WindowProps) {
   };
 
   const handleClose = () => {
+    // Trigger closing state (Rust will emit window-state-changed event)
     windowActions.close(props.id);
   };
 
   return (
     <Show when={props.windowState !== "Hidden"}>
       <div 
-        class={`window ${isMaximized() ? 'window-maximized' : 'window-minimized'}`} 
+        ref={windowRef}
+        class={`window ${isMaximized() ? 'window-maximized' : 'window-minimized'} ${isClosing() ? 'window-exiting' : ''}`}
         id={props.id}
       >
         {/* Window Header - Domain with navigation buttons */}

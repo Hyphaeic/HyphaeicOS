@@ -1,3 +1,26 @@
+/* Window mount/unmount animations */
+@keyframes fadeInBlur {
+  from {
+    opacity: 0;
+    filter: blur(10px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0px);
+  }
+}
+
+@keyframes fadeOutBlur {
+  from {
+    opacity: 1;
+    filter: blur(0px);
+  }
+  to {
+    opacity: 0;
+    filter: blur(10px);
+  }
+}
+
 /* Window Container - fills parent slot */
 .window {
   width: 100%;
@@ -7,8 +30,18 @@
   background-color: #272727;
   overflow: hidden;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-  /* Smooth transitions for any property changes */
-  transition: all 0.33s ease-in-out;
+  /* Smooth transitions for any property changes (but not animation) */
+  transition: box-shadow 0.33s ease-in-out, background-color 0.33s ease-in-out;
+  /* Fade in animation on mount */
+  animation: fadeInBlur 0.33s ease-in-out;
+}
+
+/* Fade out animation when window is closing - higher specificity */
+.window.window-exiting {
+  /* Override the fade-in animation with fade-out */
+  animation: fadeOutBlur 0.33s ease-in-out forwards;
+  /* Prevent any transitions from interfering */
+  transition: none;
 }
 
 /* Minimized window - half size in slot */
