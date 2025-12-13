@@ -1,18 +1,15 @@
-import { createSignal } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
 import BackgroundIC from "./HMI/Background/background_IC";
 import Interface from "./HMI/A_Interface/Interface";
 import "./App.css";
 
+// ============================================================================
+// APP - Root Component
+// ============================================================================
+// Minimal root that composes Background + Interface.
+// All input handling is inside Interface via Controller.
+// ============================================================================
+
 function App() {
-  const [greetMsg, setGreetMsg] = createSignal("");
-  const [name, setName] = createSignal("");
-
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name: name() }));
-  }
-
   return (
     <BackgroundIC>
       <Interface />

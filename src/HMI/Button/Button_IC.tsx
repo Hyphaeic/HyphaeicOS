@@ -3,37 +3,47 @@ import { invoke } from "@tauri-apps/api/core";
 import { useDomain } from "../A_Domain/Domain";
 import "./Button_IS.css";
 
-// Module-level tracking to prevent duplicate event listeners during hot reload
-// Key: button ID, Value: cleanup function
-const activeCursorListeners = new Map<string, () => void>();
-const activeActivateListeners = new Map<string, () => void>();
+// ============================================================================
+// BUTTON_IC - The "Marker" Component
+// ============================================================================
+// A lightweight, composable button that:
+// 1. Registers itself with the Rust navigation system
+// 2. Reacts to DOM events dispatched by Controller.tsx
+// 3. Has NO direct Tauri event listeners (only DOM events)
+// ============================================================================
 
 interface ButtonProps {
-  /** Unique identifier for this button */
+  /** Unique identifier for this button - MUST be unique in the DOM */
   id: string;
   /** Domain this button belongs to (auto-detected from context if not provided) */
   domainId?: string;
   /** Sequential order for list/grid navigation */
   order: number;
-  /** Click handler */
+  /** Click handler - called on mouse click OR keyboard activation */
   onClick?: () => void;
   /** Button content */
   children?: JSX.Element;
-  /** Optional class name */
+  /** Optional class name(s) - merged with internal classes */
   class?: string;
 }
 
 /**
- * NavigableButton - A button that integrates with the Rust WASD navigation system
+ * Button_IC - A navigable button marker component
  * 
- * Automatically registers/unregisters with the DomainNavigator on mount/unmount.
- * Waits for domain to be ready before registering.
- * Listens for cursor-moved events to show focus state.
+ * This component is a "marker" that:
+ * - Registers with Rust backend for WASD navigation
+ * - Reacts to `sys-cursor-move` DOM events for focus styling
+ * - Receives clicks from both mouse AND keyboard (via Controller.tsx)
+ * 
+ * Architecture:
+ * - Controller.tsx handles all Tauri events
+ * - Controller dispatches `sys-cursor-move` for focus changes
+ * - Controller calls `.click()` on this button for keyboard activation
  */
 export default function Button_IC(props: ButtonProps) {
   const [isFocused, setIsFocused] = createSignal(false);
-  const [isRegistered, setIsRegistered] = createSignal(false);
   const [isActive, setIsActive] = createSignal(false);
+  const [isRegistered, setIsRegistered] = createSignal(false);
   let buttonRef: HTMLButtonElement | undefined;
 
   // Get domain context (if within a Domain component)
@@ -42,7 +52,10 @@ export default function Button_IC(props: ButtonProps) {
   // Use provided domainId or get from context
   const getDomainId = () => props.domainId ?? domainContext?.id ?? '';
 
-  // Async registration function
+  // =========================================================================
+  // RUST REGISTRATION (Button -> Rust Backend)
+  // =========================================================================
+  
   const registerButton = async (domainId: string) => {
     try {
       // Get button bounds for spatial navigation
@@ -64,20 +77,7 @@ export default function Button_IC(props: ButtonProps) {
       setIsRegistered(true);
 
       // Check if this button is initially focused
-      const cursor = await invoke('get_cursor_position');
-      if (cursor && typeof cursor === 'object' && 'element_id' in cursor) {
-        setIsFocused(
-          (cursor as any).element_id === props.id &&
-          (cursor as any).domain_id === domainId
-        );
-      }
-    } catch (error) {
-      const msg = String(error);
-      if (msg.includes("already exists")) {
-        // Already registered (e.g., from hot reload) - just mark as registered
-        setIsRegistered(true);
-        
-        // Update focus state just in case
+      try {
         const cursor = await invoke('get_cursor_position');
         if (cursor && typeof cursor === 'object' && 'element_id' in cursor) {
           setIsFocused(
@@ -85,39 +85,38 @@ export default function Button_IC(props: ButtonProps) {
             (cursor as any).domain_id === domainId
           );
         }
+      } catch {
+        // Cursor position not available yet - will be set by first sys-cursor-move
+      }
+    } catch (error) {
+      const msg = String(error);
+      if (msg.includes("already exists")) {
+        // Already registered (e.g., from hot reload)
+        setIsRegistered(true);
       } else {
-        console.error(`Failed to register button ${props.id}:`, error);
+        console.error(`[Button_IC] Failed to register ${props.id}:`, error);
       }
     }
   };
 
   // Wait for domain ready, then register
-  // Using createEffect to track the isReady signal
   createEffect(() => {
-    // Must read the isReady signal to create reactive dependency
     const isDomainReady = domainContext?.isReady() ?? true;
     
-    // Early exit if domain not ready - effect will re-run when it becomes ready
-    if (!isDomainReady) {
-      return;
-    }
-
-    // Early exit if already registered
-    if (isRegistered()) {
+    if (!isDomainReady || isRegistered()) {
       return;
     }
 
     const domainId = getDomainId();
     if (!domainId) {
-      console.warn(`Button ${props.id} has no domain ID`);
+      console.warn(`[Button_IC] ${props.id} has no domain ID`);
       return;
     }
 
-    // Register the button
     registerButton(domainId);
   });
 
-  // Unregister button on cleanup
+  // Unregister on cleanup
   onCleanup(async () => {
     if (!isRegistered()) return;
     
@@ -130,42 +129,32 @@ export default function Button_IC(props: ButtonProps) {
         buttonId: props.id
       });
     } catch {
-      // Silently ignore - button may have been unregistered by domain cleanup
+      // Silently ignore - may have been cleaned up by domain
     }
   });
 
-  // Listen for cursor-moved events from global handler
-  // Uses module-level tracking to prevent duplicate listeners during hot reload
+  // =========================================================================
+  // FOCUS REACTIVITY (Controller -> Button via DOM event)
+  // =========================================================================
+  
   onMount(() => {
-    // Clean up any existing listener for this button ID first
-    const existingCleanup = activeCursorListeners.get(props.id);
-    if (existingCleanup) {
-      existingCleanup();
-    }
-    
-    const handleCursorMoved = (event: CustomEvent) => {
-      const detail = event.detail;
-      const domainId = getDomainId();
-      setIsFocused(
-        detail.element_id === props.id &&
-        detail.domain_id === domainId
-      );
+    const handleFocus = (e: CustomEvent) => {
+      // Am I the target?
+      const isMe = e.detail.element_id === props.id;
+      setIsFocused(isMe);
     };
 
-    window.addEventListener('cursor-moved', handleCursorMoved as EventListener);
+    window.addEventListener('sys-cursor-move', handleFocus as EventListener);
     
-    // Store cleanup function in module-level map
-    const cleanup = () => {
-      window.removeEventListener('cursor-moved', handleCursorMoved as EventListener);
-      activeCursorListeners.delete(props.id);
-    };
-    activeCursorListeners.set(props.id, cleanup);
-    
-    onCleanup(cleanup);
+    onCleanup(() => {
+      window.removeEventListener('sys-cursor-move', handleFocus as EventListener);
+    });
   });
 
-  // Update bounds on resize (only if registered)
-  // Note: Uses module-level tracking to prevent duplicate handlers from hot reload
+  // =========================================================================
+  // RESIZE HANDLER (Update bounds for spatial navigation)
+  // =========================================================================
+  
   onMount(() => {
     const handleResize = async () => {
       if (!buttonRef || !isRegistered()) return;
@@ -182,7 +171,6 @@ export default function Button_IC(props: ButtonProps) {
       };
 
       try {
-        // Unregister and re-register with new bounds
         await invoke('unregister_button', {
           domainId: domainId,
           buttonId: props.id
@@ -194,7 +182,7 @@ export default function Button_IC(props: ButtonProps) {
           order: props.order
         });
       } catch {
-        // Silently ignore - button may have been cleaned up
+        // Silently ignore
       }
     };
 
@@ -205,53 +193,41 @@ export default function Button_IC(props: ButtonProps) {
     });
   });
 
-  // Handle click - trigger action when button is clicked
+  // =========================================================================
+  // CLICK HANDLER (Mouse click OR Controller.tsx keyboard activation)
+  // =========================================================================
+  
   const handleClick = () => {
+    // Visual feedback: flash active state
+    setIsActive(true);
+    setTimeout(() => setIsActive(false), 150);
+    
+    // Call user's onClick handler
     if (props.onClick) {
       props.onClick();
     }
   };
 
-  // Listen for button-activate event from Rust (Enter/Space pressed on this button)
-  // Uses module-level tracking to prevent duplicate listeners during hot reload
-  onMount(() => {
-    // Clean up any existing listener for this button ID first
-    const existingCleanup = activeActivateListeners.get(props.id);
-    if (existingCleanup) {
-      existingCleanup();
-    }
-    
-    const handleActivate = (event: CustomEvent) => {
-      const detail = event.detail;
-      const domainId = getDomainId();
-      
-      // Check if this button was activated
-      if (detail.element_id === props.id && detail.domain_id === domainId) {
-        // Visual feedback: flash active state
-        setIsActive(true);
-        setTimeout(() => setIsActive(false), 150);
-        
-        // Trigger the click handler
-        handleClick();
-      }
-    };
-
-    window.addEventListener('button-activate', handleActivate as EventListener);
-    
-    // Store cleanup function in module-level map
-    const cleanup = () => {
-      window.removeEventListener('button-activate', handleActivate as EventListener);
-      activeActivateListeners.delete(props.id);
-    };
-    activeActivateListeners.set(props.id, cleanup);
-    
-    onCleanup(cleanup);
-  });
+  // =========================================================================
+  // RENDER
+  // =========================================================================
+  
+  // Build class string: internal classes + user's custom classes
+  const getClassName = () => {
+    const classes = ['nav-button'];
+    if (isFocused()) classes.push('nav-button-focused');
+    if (isActive()) classes.push('nav-button-active');
+    if (props.class) classes.push(props.class);
+    return classes.join(' ');
+  };
 
   return (
     <button
       ref={buttonRef}
-      class={`nav-button ${isFocused() ? 'nav-button-focused' : ''} ${isActive() ? 'nav-button-active' : ''} ${props.class || ''}`}
+      id={props.id}
+      tabIndex={-1}
+      onMouseDown={(e) => e.preventDefault()}
+      class={getClassName()}
       onClick={handleClick}
       data-button-id={props.id}
       data-domain-id={getDomainId()}
