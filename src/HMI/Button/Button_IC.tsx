@@ -1,7 +1,12 @@
 import { createSignal, onMount, onCleanup, createEffect, JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import { useDomain } from "../B_Domain/Domain";
+import { useDomain } from "../A_Domain/Domain";
 import "./Button_IS.css";
+
+// Module-level tracking to prevent duplicate event listeners during hot reload
+// Key: button ID, Value: cleanup function
+const activeCursorListeners = new Map<string, () => void>();
+const activeActivateListeners = new Map<string, () => void>();
 
 interface ButtonProps {
   /** Unique identifier for this button */
@@ -28,6 +33,7 @@ interface ButtonProps {
 export default function Button_IC(props: ButtonProps) {
   const [isFocused, setIsFocused] = createSignal(false);
   const [isRegistered, setIsRegistered] = createSignal(false);
+  const [isActive, setIsActive] = createSignal(false);
   let buttonRef: HTMLButtonElement | undefined;
 
   // Get domain context (if within a Domain component)
@@ -56,7 +62,6 @@ export default function Button_IC(props: ButtonProps) {
       });
 
       setIsRegistered(true);
-      console.log(`Button '${props.id}' registered in domain '${domainId}' with order ${props.order}`);
 
       // Check if this button is initially focused
       const cursor = await invoke('get_cursor_position');
@@ -69,8 +74,7 @@ export default function Button_IC(props: ButtonProps) {
     } catch (error) {
       const msg = String(error);
       if (msg.includes("already exists")) {
-        console.log(`Button '${props.id}' already registered in '${domainId}'`);
-        // If already registered, still mark as registered so we can receive updates
+        // Already registered (e.g., from hot reload) - just mark as registered
         setIsRegistered(true);
         
         // Update focus state just in case
@@ -95,7 +99,6 @@ export default function Button_IC(props: ButtonProps) {
     
     // Early exit if domain not ready - effect will re-run when it becomes ready
     if (!isDomainReady) {
-      console.log(`Button '${props.id}' waiting for domain...`);
       return;
     }
 
@@ -126,14 +129,20 @@ export default function Button_IC(props: ButtonProps) {
         domainId: domainId,
         buttonId: props.id
       });
-      console.log(`Button '${props.id}' unregistered from domain '${domainId}'`);
-    } catch (error) {
-      console.error(`Failed to unregister button ${props.id}:`, error);
+    } catch {
+      // Silently ignore - button may have been unregistered by domain cleanup
     }
   });
 
   // Listen for cursor-moved events from global handler
+  // Uses module-level tracking to prevent duplicate listeners during hot reload
   onMount(() => {
+    // Clean up any existing listener for this button ID first
+    const existingCleanup = activeCursorListeners.get(props.id);
+    if (existingCleanup) {
+      existingCleanup();
+    }
+    
     const handleCursorMoved = (event: CustomEvent) => {
       const detail = event.detail;
       const domainId = getDomainId();
@@ -145,12 +154,18 @@ export default function Button_IC(props: ButtonProps) {
 
     window.addEventListener('cursor-moved', handleCursorMoved as EventListener);
     
-    onCleanup(() => {
+    // Store cleanup function in module-level map
+    const cleanup = () => {
       window.removeEventListener('cursor-moved', handleCursorMoved as EventListener);
-    });
+      activeCursorListeners.delete(props.id);
+    };
+    activeCursorListeners.set(props.id, cleanup);
+    
+    onCleanup(cleanup);
   });
 
   // Update bounds on resize (only if registered)
+  // Note: Uses module-level tracking to prevent duplicate handlers from hot reload
   onMount(() => {
     const handleResize = async () => {
       if (!buttonRef || !isRegistered()) return;
@@ -178,8 +193,8 @@ export default function Button_IC(props: ButtonProps) {
           bounds,
           order: props.order
         });
-      } catch (error) {
-        console.error(`Failed to update bounds for button ${props.id}:`, error);
+      } catch {
+        // Silently ignore - button may have been cleaned up
       }
     };
 
@@ -197,26 +212,46 @@ export default function Button_IC(props: ButtonProps) {
     }
   };
 
-  // Handle Enter/Space key when focused
+  // Listen for button-activate event from Rust (Enter/Space pressed on this button)
+  // Uses module-level tracking to prevent duplicate listeners during hot reload
   onMount(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (isFocused() && (e.key === 'Enter' || e.key === ' ')) {
-        e.preventDefault();
+    // Clean up any existing listener for this button ID first
+    const existingCleanup = activeActivateListeners.get(props.id);
+    if (existingCleanup) {
+      existingCleanup();
+    }
+    
+    const handleActivate = (event: CustomEvent) => {
+      const detail = event.detail;
+      const domainId = getDomainId();
+      
+      // Check if this button was activated
+      if (detail.element_id === props.id && detail.domain_id === domainId) {
+        // Visual feedback: flash active state
+        setIsActive(true);
+        setTimeout(() => setIsActive(false), 150);
+        
+        // Trigger the click handler
         handleClick();
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('button-activate', handleActivate as EventListener);
     
-    onCleanup(() => {
-      window.removeEventListener('keydown', handleKeyDown);
-    });
+    // Store cleanup function in module-level map
+    const cleanup = () => {
+      window.removeEventListener('button-activate', handleActivate as EventListener);
+      activeActivateListeners.delete(props.id);
+    };
+    activeActivateListeners.set(props.id, cleanup);
+    
+    onCleanup(cleanup);
   });
 
   return (
     <button
       ref={buttonRef}
-      class={`nav-button ${isFocused() ? 'nav-button-focused' : ''} ${props.class || ''}`}
+      class={`nav-button ${isFocused() ? 'nav-button-focused' : ''} ${isActive() ? 'nav-button-active' : ''} ${props.class || ''}`}
       onClick={handleClick}
       data-button-id={props.id}
       data-domain-id={getDomainId()}

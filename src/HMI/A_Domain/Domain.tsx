@@ -60,13 +60,11 @@ export default function Domain(props: DomainProps) {
         gridColumns: props.gridColumns || null
       });
       
-      console.log(`Domain '${props.id}' registered with layout: ${props.layoutMode}`);
-      
       setIsReady(true);
     } catch (error) {
       const msg = String(error);
       if (msg.includes("already exists")) {
-         console.log(`Domain '${props.id}' already registered (skipping)`);
+         // Already registered (e.g., from hot reload) - mark as ready
          setIsReady(true);
       } else {
          console.error(`Failed to register domain ${props.id}:`, error);
@@ -80,10 +78,8 @@ export default function Domain(props: DomainProps) {
       await invoke('unregister_domain', {
         domainId: props.id
       });
-      
-      console.log(`Domain '${props.id}' unregistered`);
-    } catch (error) {
-      console.error(`Failed to unregister domain ${props.id}:`, error);
+    } catch {
+      // Silently ignore - domain may have been cleaned up already
     }
   });
 

@@ -458,13 +458,33 @@ fn default_shortcuts() -> Vec<Shortcut> {
 #[tauri::command]
 fn set_global_shortcuts_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
     if enabled {
+        // First unregister all shortcuts to avoid "already registered" errors
+        let _ = app.global_shortcut().unregister_all();
+        
+        let mut success_count = 0;
+        let mut last_error = None;
+        
         for shortcut in default_shortcuts() {
-            app.global_shortcut()
-                .register(shortcut)
-                .map_err(|e| format!("Failed to register shortcut: {}", e))?;
+            match app.global_shortcut().register(shortcut.clone()) {
+                Ok(_) => success_count += 1,
+                Err(e) => {
+                    eprintln!("Failed to register shortcut {:?}: {}", shortcut, e);
+                    last_error = Some(e);
+                }
+            }
         }
-        Ok(())
+        
+        if success_count > 0 {
+            println!("Global shortcuts enabled ({} keys registered)", success_count);
+            Ok(())
+        } else if let Some(e) = last_error {
+            Err(format!("Failed to register any shortcuts: {}", e))
+        } else {
+            Err("Failed to register shortcuts for unknown reason".to_string())
+        }
     } else {
+        // Immediately unregister all shortcuts when window loses focus
+        println!("Global shortcuts disabled");
         app.global_shortcut()
             .unregister_all()
             .map_err(|e| format!("Failed to unregister shortcuts: {}", e))
@@ -524,15 +544,11 @@ pub fn run() {
                 .build(),
         )
         .manage(app_state)
-        .setup(|app| {
-            // Register global shortcuts when app starts
-            for shortcut in default_shortcuts() {
-                if let Err(e) = app.global_shortcut().register(shortcut) {
-                    eprintln!("Failed to register shortcut: {}", e);
-                }
-            }
-
-            println!("WASD navigation shortcuts registered at OS level");
+        .setup(|_app| {
+            // NOTE: Shortcuts are NOT registered here anymore.
+            // Frontend controls registration via set_global_shortcuts_enabled()
+            // This prevents duplicate registrations and allows proper focus/blur handling.
+            println!("WASD navigation system initialized (shortcuts will register on window focus)");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

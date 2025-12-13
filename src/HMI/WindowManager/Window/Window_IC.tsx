@@ -1,6 +1,6 @@
 import "./Window_IC.css";
 import { JSXElement } from "solid-js";
-import Domain from "../../B_Domain/Domain";
+import Domain from "../../A_Domain/Domain";
 import Button_IC from "../../Button/Button_IC";
 
 interface WindowProps {

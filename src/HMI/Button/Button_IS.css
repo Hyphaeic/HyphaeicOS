@@ -18,6 +18,10 @@
   font-weight: 500;
   cursor: pointer;
   
+  /* Explicitly remove any shadows */
+  box-shadow: none;
+  filter: none;
+  
   /* No transitions - instant state changes */
 }
 
@@ -36,10 +40,17 @@
   box-shadow: inset 0 0 0 4px #41EFA4;
 }
 
-/* Active/pressed state */
+/* Active/pressed state (mouse) */
 .nav-button:active,
 .nav-button-focused:active {
   box-shadow: inset 0 0 0 4px #41EFA4;
+  background: rgba(65, 239, 164, 0.15);
+}
+
+/* Active state (keyboard activation from Rust) */
+.nav-button-active {
+  box-shadow: inset 0 0 0 4px #41EFA4;
+  background: rgba(65, 239, 164, 0.15);
 }
 
 /* Icon/content styling within button */

@@ -1,7 +1,7 @@
 import { createSignal, onMount, onCleanup } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import hyphaeicLogo from "../../assets/images/hyphaeicLogo.png";
-import Domain from "../B_Domain/Domain";
+import Domain from "../A_Domain/Domain";
 import Button_IC from "../Button/Button_IC";
 import "./OSBar_IS.css";
 

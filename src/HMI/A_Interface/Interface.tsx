@@ -6,7 +6,10 @@ import Compositor_IC from "../WindowManager/Compositor/Compositor_IC";
 import Window_IC from "../WindowManager/Window/Window_IC";
 import TESTING_DUMMY from "../TESTING_DUMMY/TESTING_DUMMY";
 
-// Track if F11 handler is registered (for hot reload protection)
+// Module-level state for hot reload protection
+// These persist across component re-mounts during hot reload
+let tauriListenersSetup = false;
+let tauriUnlisteners: UnlistenFn[] = [];
 let f11HandlerRegistered = false;
 let focusHandlersRegistered = false;
 
@@ -48,41 +51,41 @@ interface ButtonActivatePayload {
  * 4. F11 (fullscreen) is the ONLY key captured here (webview-specific function)
  */
 export default function Interface() {
-  // Store unlisten functions for cleanup
-  let unlisteners: UnlistenFn[] = [];
-  
   // Setup Tauri event listeners (events emitted from Rust input handler)
+  // Uses module-level tracking to prevent duplicate listeners on hot reload
   onMount(async () => {
+    // Skip if already setup (hot reload protection)
+    if (tauriListenersSetup) {
+      return;
+    }
+    tauriListenersSetup = true;
+    
     // Listen for cursor-moved events from Rust
     const unlistenCursor = await listen<CursorMovedPayload>('cursor-moved', (event) => {
-      console.log('[Rust→UI] cursor-moved:', event.payload);
       window.dispatchEvent(new CustomEvent('cursor-moved', {
         detail: event.payload
       }));
     });
-    unlisteners.push(unlistenCursor);
+    tauriUnlisteners.push(unlistenCursor);
     
     // Listen for at-gate events from Rust
     const unlistenGate = await listen<AtGatePayload>('at-gate', (event) => {
-      console.log('[Rust→UI] at-gate:', event.payload);
       window.dispatchEvent(new CustomEvent('at-gate', {
         detail: event.payload
       }));
     });
-    unlisteners.push(unlistenGate);
+    tauriUnlisteners.push(unlistenGate);
     
     // Listen for domain-switched events from Rust
     const unlistenDomain = await listen<DomainSwitchedPayload>('domain-switched', (event) => {
-      console.log('[Rust→UI] domain-switched:', event.payload);
       window.dispatchEvent(new CustomEvent('domain-switched', {
         detail: event.payload
       }));
     });
-    unlisteners.push(unlistenDomain);
+    tauriUnlisteners.push(unlistenDomain);
     
     // Listen for boundary-reached events from Rust
     const unlistenBoundary = await listen<BoundaryReachedPayload>('boundary-reached', async (event) => {
-      console.log('[Rust→UI] boundary-reached:', event.payload);
       window.dispatchEvent(new CustomEvent('boundary-reached', {
         detail: event.payload
       }));
@@ -94,13 +97,11 @@ export default function Interface() {
         
         if (activeDomain === 'osbar-nav' && event.payload.direction === 'right') {
           // Switch OSbar -> Window Header
-          console.log('Boundary right on OSbar -> Switching to Window');
           await invoke('set_active_domain', { domainId: 'window-header-nav' });
           await invoke('emit_cursor_position');
         } 
         else if (activeDomain === 'window-header-nav' && event.payload.direction === 'left') {
           // Switch Window Header -> OSbar
-          console.log('Boundary left on Window -> Switching to OSbar');
           await invoke('set_active_domain', { domainId: 'osbar-nav' });
           await invoke('emit_cursor_position');
         }
@@ -108,22 +109,19 @@ export default function Interface() {
         console.error('Boundary handler error:', error);
       }
     });
-    unlisteners.push(unlistenBoundary);
+    tauriUnlisteners.push(unlistenBoundary);
     
     // Listen for button-activate events from Rust (Enter/Space on a button)
     const unlistenActivate = await listen<ButtonActivatePayload>('button-activate', (event) => {
-      console.log('[Rust→UI] button-activate:', event.payload);
-      window.dispatchEvent(new CustomEvent('button-activate', {
-        detail: event.payload
-      }));
+      window.dispatchEvent(new CustomEvent('button-activate', { detail: event.payload }));
     });
-    unlisteners.push(unlistenActivate);
+    tauriUnlisteners.push(unlistenActivate);
   });
   
-  // Cleanup Tauri listeners
+  // Cleanup Tauri listeners only on full unmount (not hot reload)
   onCleanup(() => {
-    unlisteners.forEach(unlisten => unlisten());
-    unlisteners = [];
+    // Note: We keep listeners alive during hot reload
+    // They will be cleaned up when the app fully unloads
   });
 
   // F11 fullscreen toggle - ONLY webview-specific key handling
@@ -202,14 +200,11 @@ export default function Interface() {
       window.addEventListener('focus', enableShortcuts);
       window.addEventListener('blur', disableShortcuts);
 
-      // Ensure enabled on initial mount
+      // Enable shortcuts on initial mount (since window is focused)
       enableShortcuts();
 
-      onCleanup(() => {
-        window.removeEventListener('focus', enableShortcuts);
-        window.removeEventListener('blur', disableShortcuts);
-        focusHandlersRegistered = false;
-      });
+      // Note: We don't reset focusHandlersRegistered on cleanup
+      // to prevent duplicate handlers during hot reload
     }
   });
 
@@ -221,27 +216,21 @@ export default function Interface() {
     try {
       const emitted = await invoke('emit_cursor_position') as boolean;
       if (!emitted) {
-        console.warn('No initial cursor position - setting OSbar as active');
-        
-        // Explicitly set OSbar as active domain (it should be first choice)
+        // No cursor position - set OSbar as active domain
         try {
           await invoke('set_active_domain', { domainId: 'osbar-nav' });
           await invoke('emit_cursor_position');
-          console.log('Cursor initialized to OSbar');
-        } catch (osbarError) {
-          console.error('Failed to set OSbar active, trying fallback:', osbarError);
-          
-          // Ultimate fallback: any domain
+        } catch {
+          // Fallback to any registered domain
           const domains = await invoke('get_all_domains') as string[];
           if (domains.length > 0) {
             await invoke('set_active_domain', { domainId: domains[0] });
             await invoke('emit_cursor_position');
-            console.log(`Cursor initialized to fallback domain: ${domains[0]}`);
           }
         }
       }
-    } catch (error) {
-      console.error('Failed to emit initial cursor position:', error);
+    } catch {
+      // Silently ignore - cursor will be set on first navigation
     }
   });
 
