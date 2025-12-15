@@ -8,7 +8,7 @@
   width: 100%;
   height: 100%;
   box-sizing: border-box;
-  
+
   /* Base appearance */
   background: transparent;
   border: none;
@@ -17,11 +17,11 @@
   font-size: 0.85rem;
   font-weight: 500;
   cursor: pointer;
-  
+
   /* Explicitly remove any shadows */
   box-shadow: none;
   filter: none;
-  
+
   /* No transitions - instant state changes */
 }
 
@@ -54,7 +54,7 @@
 }
 
 /* Icon/content styling within button */
-.nav-button > * {
+.nav-button>* {
   pointer-events: none;
 }
 

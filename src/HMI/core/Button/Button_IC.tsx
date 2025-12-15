@@ -48,14 +48,14 @@ export default function Button_IC(props: ButtonProps) {
 
   // Get domain context (if within a Domain component)
   const domainContext = useDomain();
-  
+
   // Use provided domainId or get from context
   const getDomainId = () => props.domainId ?? domainContext?.id ?? '';
 
   // =========================================================================
   // RUST REGISTRATION (Button -> Rust Backend)
   // =========================================================================
-  
+
   const registerButton = async (domainId: string) => {
     try {
       // Get button bounds for spatial navigation
@@ -102,7 +102,7 @@ export default function Button_IC(props: ButtonProps) {
   // Wait for domain ready, then register
   createEffect(() => {
     const isDomainReady = domainContext?.isReady() ?? true;
-    
+
     if (!isDomainReady || isRegistered()) {
       return;
     }
@@ -119,7 +119,7 @@ export default function Button_IC(props: ButtonProps) {
   // Unregister on cleanup
   onCleanup(async () => {
     if (!isRegistered()) return;
-    
+
     const domainId = getDomainId();
     if (!domainId) return;
 
@@ -136,7 +136,7 @@ export default function Button_IC(props: ButtonProps) {
   // =========================================================================
   // FOCUS REACTIVITY (Controller -> Button via DOM event)
   // =========================================================================
-  
+
   onMount(() => {
     const handleFocus = (e: CustomEvent) => {
       // Am I the target?
@@ -145,7 +145,7 @@ export default function Button_IC(props: ButtonProps) {
     };
 
     window.addEventListener('sys-cursor-move', handleFocus as EventListener);
-    
+
     onCleanup(() => {
       window.removeEventListener('sys-cursor-move', handleFocus as EventListener);
     });
@@ -154,11 +154,11 @@ export default function Button_IC(props: ButtonProps) {
   // =========================================================================
   // RESIZE HANDLER (Update bounds for spatial navigation)
   // =========================================================================
-  
+
   onMount(() => {
     const handleResize = async () => {
       if (!buttonRef || !isRegistered()) return;
-      
+
       const domainId = getDomainId();
       if (!domainId) return;
 
@@ -184,7 +184,7 @@ export default function Button_IC(props: ButtonProps) {
     };
 
     window.addEventListener('resize', handleResize);
-    
+
     onCleanup(() => {
       window.removeEventListener('resize', handleResize);
     });
@@ -193,12 +193,12 @@ export default function Button_IC(props: ButtonProps) {
   // =========================================================================
   // CLICK HANDLER (Mouse click OR Controller.tsx keyboard activation)
   // =========================================================================
-  
+
   const handleClick = () => {
     // Visual feedback: flash active state
     setIsActive(true);
     setTimeout(() => setIsActive(false), 150);
-    
+
     // Call user's onClick handler
     if (props.onClick) {
       props.onClick();
@@ -208,7 +208,7 @@ export default function Button_IC(props: ButtonProps) {
   // =========================================================================
   // MOUSE HOVER HANDLER (Syncs Rust cursor to Mouse)
   // =========================================================================
-  
+
   const handleMouseEnter = async () => {
     // If we are already focused, do nothing
     if (isFocused()) return;
@@ -231,7 +231,7 @@ export default function Button_IC(props: ButtonProps) {
   // =========================================================================
   // RENDER
   // =========================================================================
-  
+
   // Build class string: internal classes + user's custom classes
   const getClassName = () => {
     const classes = ['nav-button'];

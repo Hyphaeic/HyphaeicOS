@@ -48,10 +48,10 @@ impl WASDKey {
     /// Get directional unit vector
     pub fn direction_vector(&self) -> (f64, f64) {
         match self {
-            WASDKey::W => (0.0, -1.0),  // Up
-            WASDKey::A => (-1.0, 0.0),  // Left
-            WASDKey::S => (0.0, 1.0),   // Down
-            WASDKey::D => (1.0, 0.0),   // Right
+            WASDKey::W => (0.0, -1.0), // Up
+            WASDKey::A => (-1.0, 0.0), // Left
+            WASDKey::S => (0.0, 1.0),  // Down
+            WASDKey::D => (1.0, 0.0),  // Right
         }
     }
 }
@@ -107,7 +107,7 @@ pub struct ButtonElement {
     pub id: String,
     pub bounds: Option<Rect>,
     pub enabled: bool,
-    pub order: usize,  // Sequential order for list/grid layouts
+    pub order: usize, // Sequential order for list/grid layouts
 }
 
 /// A gate element that allows domain switching
@@ -117,7 +117,7 @@ pub struct GateElement {
     pub bounds: Option<Rect>,
     pub target_domain: String,
     pub direction: GateDirection,
-    pub entry_point: Option<usize>,  // Index to enter in target domain
+    pub entry_point: Option<usize>, // Index to enter in target domain
 }
 
 /// A domain containing navigable elements
@@ -154,7 +154,9 @@ impl Domain {
             Some((ElementType::Button, self.buttons[index].id.clone()))
         } else {
             let gate_index = index - self.buttons.len();
-            self.gates.get(gate_index).map(|g| (ElementType::Gate, g.id.clone()))
+            self.gates
+                .get(gate_index)
+                .map(|g| (ElementType::Gate, g.id.clone()))
         }
     }
 
@@ -196,13 +198,13 @@ pub enum NavigationTarget {
 #[serde(tag = "type")]
 pub enum NavigationResult {
     /// Cursor moved to new element
-    CursorMoved { 
+    CursorMoved {
         domain_id: String,
         element_id: String,
         element_type: ElementType,
     },
     /// Cursor is at a gate, ready to switch
-    AtGate { 
+    AtGate {
         gate_id: String,
         target_domain: String,
     },
@@ -219,6 +221,3 @@ pub enum NavigationResult {
     /// Error occurred
     Error { message: String },
 }
-
-
-

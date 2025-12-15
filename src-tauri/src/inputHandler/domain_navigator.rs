@@ -45,12 +45,13 @@ impl DomainNavigator {
         if self.saved_active_domain.as_ref() == Some(&domain_id) {
             self.active_domain_id = Some(domain_id.clone());
             self.saved_active_domain = None;
-            
+
             // Restore cursor position if we have one saved
             if let Some(saved_cursor) = self.saved_cursor_positions.remove(&domain_id) {
                 // Don't set cursor yet - wait for buttons to register
                 // Store it back temporarily until buttons are registered
-                self.saved_cursor_positions.insert(domain_id.clone(), saved_cursor);
+                self.saved_cursor_positions
+                    .insert(domain_id.clone(), saved_cursor);
             }
         }
         // If this is the first domain and no active domain, make it active
@@ -64,7 +65,7 @@ impl DomainNavigator {
     /// Unregister a domain
     pub fn unregister_domain(&mut self, domain_id: &str) -> Result<(), String> {
         println!("[UNREGISTER_DOMAIN] domain: {}", domain_id);
-        
+
         if !self.domains.contains_key(domain_id) {
             return Err(format!("Domain '{}' not found", domain_id));
         }
@@ -72,7 +73,8 @@ impl DomainNavigator {
         // If cursor was in this domain, save it for restoration
         if let Some(cursor) = &self.cursor_position {
             if cursor.domain_id == domain_id {
-                self.saved_cursor_positions.insert(domain_id.to_string(), cursor.clone());
+                self.saved_cursor_positions
+                    .insert(domain_id.to_string(), cursor.clone());
             }
         }
 
@@ -84,12 +86,15 @@ impl DomainNavigator {
         }
 
         self.domains.remove(domain_id);
-        
+
         // Clean up saved cursor for this domain since it no longer exists
         // This prevents stale entries from causing issues
         self.saved_cursor_positions.remove(domain_id);
-        println!("[UNREGISTER_DOMAIN] Cleaned up saved cursor, remaining: {:?}", self.saved_cursor_positions.keys().collect::<Vec<_>>());
-        
+        println!(
+            "[UNREGISTER_DOMAIN] Cleaned up saved cursor, remaining: {:?}",
+            self.saved_cursor_positions.keys().collect::<Vec<_>>()
+        );
+
         Ok(())
     }
 
@@ -101,17 +106,34 @@ impl DomainNavigator {
         bounds: Option<Rect>,
         order: usize,
     ) -> Result<(), String> {
-        println!("[REGISTER_BUTTON] domain: {}, button: {}, order: {}", domain_id, button_id, order);
-        println!("[REGISTER_BUTTON] Active domain: {:?}", self.active_domain_id);
-        println!("[REGISTER_BUTTON] Current cursor: {:?}", self.cursor_position);
-        println!("[REGISTER_BUTTON] Saved cursors: {:?}", self.saved_cursor_positions);
-        
-        let domain = self.domains.get_mut(&domain_id)
+        println!(
+            "[REGISTER_BUTTON] domain: {}, button: {}, order: {}",
+            domain_id, button_id, order
+        );
+        println!(
+            "[REGISTER_BUTTON] Active domain: {:?}",
+            self.active_domain_id
+        );
+        println!(
+            "[REGISTER_BUTTON] Current cursor: {:?}",
+            self.cursor_position
+        );
+        println!(
+            "[REGISTER_BUTTON] Saved cursors: {:?}",
+            self.saved_cursor_positions
+        );
+
+        let domain = self
+            .domains
+            .get_mut(&domain_id)
             .ok_or_else(|| format!("Domain '{}' not found", domain_id))?;
 
         // Check if button already exists
         if domain.buttons.iter().any(|b| b.id == button_id) {
-            return Err(format!("Button '{}' already exists in domain '{}'", button_id, domain_id));
+            return Err(format!(
+                "Button '{}' already exists in domain '{}'",
+                button_id, domain_id
+            ));
         }
 
         let button = ButtonElement {
@@ -126,7 +148,10 @@ impl DomainNavigator {
         // Sort buttons by order
         domain.buttons.sort_by_key(|b| b.order);
 
-        println!("[REGISTER_BUTTON] Domain now has {} buttons", domain.buttons.len());
+        println!(
+            "[REGISTER_BUTTON] Domain now has {} buttons",
+            domain.buttons.len()
+        );
 
         // Check if we have a saved cursor position for this domain
         if self.active_domain_id.as_ref() == Some(&domain_id) {
@@ -146,14 +171,19 @@ impl DomainNavigator {
                 } else {
                     // There's a saved cursor waiting for a different button
                     // Don't set cursor to first element - wait for the correct button to register
-                    println!("[REGISTER_BUTTON] Saved cursor exists for different button, waiting...");
+                    println!(
+                        "[REGISTER_BUTTON] Saved cursor exists for different button, waiting..."
+                    );
                     return Ok(());
                 }
             }
-            
+
             // If no cursor position and no saved cursor and this is the first element, set cursor to it
             if self.cursor_position.is_none() && domain.element_count() == 1 {
-                println!("[REGISTER_BUTTON] ✓ Setting cursor to first element: {}", button_id);
+                println!(
+                    "[REGISTER_BUTTON] ✓ Setting cursor to first element: {}",
+                    button_id
+                );
                 self.cursor_position = Some(CursorPosition {
                     domain_id: domain_id.clone(),
                     element_id: button_id,
@@ -168,22 +198,37 @@ impl DomainNavigator {
 
     /// Unregister a button
     pub fn unregister_button(&mut self, domain_id: &str, button_id: &str) -> Result<(), String> {
-        println!("[UNREGISTER_BUTTON] domain: {}, button: {}", domain_id, button_id);
-        println!("[UNREGISTER_BUTTON] Current cursor: {:?}", self.cursor_position);
-        
-        let domain = self.domains.get_mut(domain_id)
+        println!(
+            "[UNREGISTER_BUTTON] domain: {}, button: {}",
+            domain_id, button_id
+        );
+        println!(
+            "[UNREGISTER_BUTTON] Current cursor: {:?}",
+            self.cursor_position
+        );
+
+        let domain = self
+            .domains
+            .get_mut(domain_id)
             .ok_or_else(|| format!("Domain '{}' not found", domain_id))?;
 
-        let index = domain.buttons.iter().position(|b| b.id == button_id)
+        let index = domain
+            .buttons
+            .iter()
+            .position(|b| b.id == button_id)
             .ok_or_else(|| format!("Button '{}' not found in domain '{}'", button_id, domain_id))?;
 
         // If cursor was on this button, save it for restoration when button re-registers
         // (e.g., during resize, window state change, etc.)
         if let Some(cursor) = &self.cursor_position {
             if cursor.domain_id == domain_id && cursor.element_id == button_id {
-                println!("[UNREGISTER_BUTTON] ✓ SAVING cursor position for {}", button_id);
+                println!(
+                    "[UNREGISTER_BUTTON] ✓ SAVING cursor position for {}",
+                    button_id
+                );
                 // Save cursor position for this domain
-                self.saved_cursor_positions.insert(domain_id.to_string(), cursor.clone());
+                self.saved_cursor_positions
+                    .insert(domain_id.to_string(), cursor.clone());
                 // Clear current cursor since button no longer exists
                 // It will be restored when button re-registers
                 self.cursor_position = None;
@@ -191,8 +236,14 @@ impl DomainNavigator {
         }
 
         domain.buttons.remove(index);
-        println!("[UNREGISTER_BUTTON] Domain now has {} buttons", domain.buttons.len());
-        println!("[UNREGISTER_BUTTON] Saved cursors: {:?}", self.saved_cursor_positions);
+        println!(
+            "[UNREGISTER_BUTTON] Domain now has {} buttons",
+            domain.buttons.len()
+        );
+        println!(
+            "[UNREGISTER_BUTTON] Saved cursors: {:?}",
+            self.saved_cursor_positions
+        );
 
         Ok(())
     }
@@ -205,10 +256,14 @@ impl DomainNavigator {
         button_id: &str,
         bounds: Option<Rect>,
     ) -> Result<(), String> {
-        let domain = self.domains.get_mut(domain_id)
+        let domain = self
+            .domains
+            .get_mut(domain_id)
             .ok_or_else(|| format!("Domain '{}' not found", domain_id))?;
 
-        let button = domain.buttons.iter_mut()
+        let button = domain
+            .buttons
+            .iter_mut()
             .find(|b| b.id == button_id)
             .ok_or_else(|| format!("Button '{}' not found in domain '{}'", button_id, domain_id))?;
 
@@ -225,12 +280,17 @@ impl DomainNavigator {
         direction: GateDirection,
         entry_point: Option<usize>,
     ) -> Result<(), String> {
-        let domain = self.domains.get_mut(&source_domain)
+        let domain = self
+            .domains
+            .get_mut(&source_domain)
             .ok_or_else(|| format!("Source domain '{}' not found", source_domain))?;
 
         // Check if gate already exists
         if domain.gates.iter().any(|g| g.id == gate_id) {
-            return Err(format!("Gate '{}' already exists in domain '{}'", gate_id, source_domain));
+            return Err(format!(
+                "Gate '{}' already exists in domain '{}'",
+                gate_id, source_domain
+            ));
         }
 
         let gate = GateElement {
@@ -248,10 +308,15 @@ impl DomainNavigator {
 
     /// Unregister a gate
     pub fn unregister_gate(&mut self, domain_id: &str, gate_id: &str) -> Result<(), String> {
-        let domain = self.domains.get_mut(domain_id)
+        let domain = self
+            .domains
+            .get_mut(domain_id)
             .ok_or_else(|| format!("Domain '{}' not found", domain_id))?;
 
-        let index = domain.gates.iter().position(|g| g.id == gate_id)
+        let index = domain
+            .gates
+            .iter()
+            .position(|g| g.id == gate_id)
             .ok_or_else(|| format!("Gate '{}' not found in domain '{}'", gate_id, domain_id))?;
 
         domain.gates.remove(index);
@@ -292,9 +357,15 @@ impl DomainNavigator {
     }
 
     /// Explicitly set the cursor position (e.g. from mouse hover)
-    pub fn set_cursor_position(&mut self, domain_id: &str, element_id: &str) -> Result<ElementType, String> {
+    pub fn set_cursor_position(
+        &mut self,
+        domain_id: &str,
+        element_id: &str,
+    ) -> Result<ElementType, String> {
         // Verify domain exists
-        let domain = self.domains.get(domain_id)
+        let domain = self
+            .domains
+            .get(domain_id)
             .ok_or_else(|| format!("Domain '{}' not found", domain_id))?;
 
         // Verify element exists and get its type
@@ -303,7 +374,10 @@ impl DomainNavigator {
         } else if domain.gates.iter().any(|g| g.id == element_id) {
             ElementType::Gate
         } else {
-            return Err(format!("Element '{}' not found in domain '{}'", element_id, domain_id));
+            return Err(format!(
+                "Element '{}' not found in domain '{}'",
+                element_id, domain_id
+            ));
         };
 
         // Update active domain
@@ -343,7 +417,11 @@ impl DomainNavigator {
                 0
             };
 
-            (domain.element_count(), current_index, domain.layout_mode.clone())
+            (
+                domain.element_count(),
+                current_index,
+                domain.layout_mode.clone(),
+            )
         };
 
         // Navigate based on layout mode
@@ -374,7 +452,9 @@ impl DomainNavigator {
                 // Get gate target if this is a gate
                 let gate_target = if element_type == ElementType::Gate {
                     let domain = self.domains.get(&active_domain_id).unwrap();
-                    domain.gates.iter()
+                    domain
+                        .gates
+                        .iter()
                         .find(|g| g.id == element_id)
                         .map(|gate| gate.target_domain.clone())
                 } else {
@@ -413,7 +493,12 @@ impl DomainNavigator {
     }
 
     /// Navigate using spatial positioning
-    fn navigate_spatial(&self, domain: &Domain, current_index: usize, direction: WASDKey) -> Option<usize> {
+    fn navigate_spatial(
+        &self,
+        domain: &Domain,
+        current_index: usize,
+        direction: WASDKey,
+    ) -> Option<usize> {
         // Get current element bounds
         let current_element = if current_index < domain.buttons.len() {
             domain.buttons[current_index].bounds?
@@ -424,7 +509,7 @@ impl DomainNavigator {
 
         // Collect all candidate elements with bounds
         let mut candidates: Vec<(String, Rect)> = Vec::new();
-        
+
         for (idx, button) in domain.buttons.iter().enumerate() {
             if idx != current_index {
                 if let Some(bounds) = button.bounds {
@@ -467,16 +552,20 @@ impl DomainNavigator {
         // Find the gate
         let domain = match self.domains.get(&cursor.domain_id) {
             Some(d) => d,
-            None => return NavigationResult::Error {
-                message: format!("Domain '{}' not found", cursor.domain_id),
-            },
+            None => {
+                return NavigationResult::Error {
+                    message: format!("Domain '{}' not found", cursor.domain_id),
+                }
+            }
         };
 
         let gate = match domain.gates.iter().find(|g| g.id == cursor.element_id) {
             Some(g) => g,
-            None => return NavigationResult::Error {
-                message: format!("Gate '{}' not found", cursor.element_id),
-            },
+            None => {
+                return NavigationResult::Error {
+                    message: format!("Gate '{}' not found", cursor.element_id),
+                }
+            }
         };
 
         let target_domain_id = gate.target_domain.clone();
@@ -493,9 +582,14 @@ impl DomainNavigator {
         let target_domain = self.domains.get(&target_domain_id).unwrap();
         let (element_type, element_id) = match target_domain.get_element_at_index(entry_point) {
             Some(e) => e,
-            None => return NavigationResult::Error {
-                message: format!("No element at entry point {} in domain '{}'", entry_point, target_domain_id),
-            },
+            None => {
+                return NavigationResult::Error {
+                    message: format!(
+                        "No element at entry point {} in domain '{}'",
+                        entry_point, target_domain_id
+                    ),
+                }
+            }
         };
 
         // Switch!
@@ -525,10 +619,16 @@ impl DomainNavigator {
     }
 
     /// Update the layout mode of a domain
-    pub fn update_layout_mode(&mut self, domain_id: &str, layout_mode: LayoutMode) -> Result<(), String> {
-        let domain = self.domains.get_mut(domain_id)
+    pub fn update_layout_mode(
+        &mut self,
+        domain_id: &str,
+        layout_mode: LayoutMode,
+    ) -> Result<(), String> {
+        let domain = self
+            .domains
+            .get_mut(domain_id)
             .ok_or_else(|| format!("Domain '{}' not found", domain_id))?;
-        
+
         domain.layout_mode = layout_mode;
         Ok(())
     }
@@ -547,12 +647,15 @@ mod tests {
     #[test]
     fn test_domain_registration() {
         let mut nav = DomainNavigator::new();
-        
+
         nav.register_domain(
             "test-domain".to_string(),
             None,
-            LayoutMode::List { direction: ListDirection::Vertical },
-        ).unwrap();
+            LayoutMode::List {
+                direction: ListDirection::Vertical,
+            },
+        )
+        .unwrap();
 
         assert_eq!(nav.get_active_domain_id(), Some("test-domain".to_string()));
     }
@@ -560,19 +663,18 @@ mod tests {
     #[test]
     fn test_button_registration() {
         let mut nav = DomainNavigator::new();
-        
+
         nav.register_domain(
             "test-domain".to_string(),
             None,
-            LayoutMode::List { direction: ListDirection::Vertical },
-        ).unwrap();
+            LayoutMode::List {
+                direction: ListDirection::Vertical,
+            },
+        )
+        .unwrap();
 
-        nav.register_button(
-            "test-domain".to_string(),
-            "btn-1".to_string(),
-            None,
-            0,
-        ).unwrap();
+        nav.register_button("test-domain".to_string(), "btn-1".to_string(), None, 0)
+            .unwrap();
 
         let cursor = nav.get_cursor_position().unwrap();
         assert_eq!(cursor.element_id, "btn-1");
@@ -582,21 +684,20 @@ mod tests {
     #[test]
     fn test_list_navigation() {
         let mut nav = DomainNavigator::new();
-        
+
         nav.register_domain(
             "test-domain".to_string(),
             None,
-            LayoutMode::List { direction: ListDirection::Vertical },
-        ).unwrap();
+            LayoutMode::List {
+                direction: ListDirection::Vertical,
+            },
+        )
+        .unwrap();
 
         // Add 3 buttons
         for i in 0..3 {
-            nav.register_button(
-                "test-domain".to_string(),
-                format!("btn-{}", i),
-                None,
-                i,
-            ).unwrap();
+            nav.register_button("test-domain".to_string(), format!("btn-{}", i), None, i)
+                .unwrap();
         }
 
         // Should start at first button
@@ -627,17 +728,23 @@ mod tests {
     #[test]
     fn test_button_unregister_reregister_preserves_cursor() {
         let mut nav = DomainNavigator::new();
-        
+
         nav.register_domain(
             "test-domain".to_string(),
             None,
-            LayoutMode::List { direction: ListDirection::Horizontal },
-        ).unwrap();
+            LayoutMode::List {
+                direction: ListDirection::Horizontal,
+            },
+        )
+        .unwrap();
 
         // Add 3 buttons (like window header buttons: minimize, maximize, close)
-        nav.register_button("test-domain".to_string(), "btn-min".to_string(), None, 0).unwrap();
-        nav.register_button("test-domain".to_string(), "btn-max".to_string(), None, 1).unwrap();
-        nav.register_button("test-domain".to_string(), "btn-close".to_string(), None, 2).unwrap();
+        nav.register_button("test-domain".to_string(), "btn-min".to_string(), None, 0)
+            .unwrap();
+        nav.register_button("test-domain".to_string(), "btn-max".to_string(), None, 1)
+            .unwrap();
+        nav.register_button("test-domain".to_string(), "btn-close".to_string(), None, 2)
+            .unwrap();
 
         // Navigate to middle button (maximize)
         nav.handle_wasd_input(WASDKey::D);
@@ -653,13 +760,18 @@ mod tests {
         assert!(nav.get_cursor_position().is_none());
 
         // Re-register all buttons (simulating re-registration after resize)
-        nav.register_button("test-domain".to_string(), "btn-min".to_string(), None, 0).unwrap();
-        nav.register_button("test-domain".to_string(), "btn-max".to_string(), None, 1).unwrap();
-        nav.register_button("test-domain".to_string(), "btn-close".to_string(), None, 2).unwrap();
+        nav.register_button("test-domain".to_string(), "btn-min".to_string(), None, 0)
+            .unwrap();
+        nav.register_button("test-domain".to_string(), "btn-max".to_string(), None, 1)
+            .unwrap();
+        nav.register_button("test-domain".to_string(), "btn-close".to_string(), None, 2)
+            .unwrap();
 
         // Cursor should be restored to the maximize button
         let cursor = nav.get_cursor_position().unwrap();
-        assert_eq!(cursor.element_id, "btn-max", "Cursor should be restored to the same button after re-registration");
+        assert_eq!(
+            cursor.element_id, "btn-max",
+            "Cursor should be restored to the same button after re-registration"
+        );
     }
 }
-
