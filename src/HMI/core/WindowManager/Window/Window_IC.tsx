@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import Domain from "../../A_Domain/Domain";
 import Button_IC from "../../Button/Button_IC";
 import { windowActions } from "../../A_Controller/Controller";
-import { WindowState } from "../../store";
+import { WindowState } from "../../../store";
 
 interface WindowProps {
   id: string;
@@ -31,18 +31,18 @@ interface WindowProps {
  */
 export default function Window_IC(props: WindowProps) {
   const isMaximized = () => props.windowState === "Maximized";
-  
+
   // Local closing state that persists across prop changes
   // Once set to true, it stays true until component unmounts
   const [localIsClosing, setLocalIsClosing] = createSignal(false);
-  
+
   // Track if window has started closing
   createEffect(() => {
     if (props.windowState === "Closing" && !localIsClosing()) {
       setLocalIsClosing(true);
     }
   });
-  
+
   const isClosing = () => localIsClosing();
 
   let windowRef: HTMLDivElement | undefined;
@@ -102,7 +102,7 @@ export default function Window_IC(props: WindowProps) {
 
   return (
     <Show when={props.windowState !== "Hidden"}>
-      <div 
+      <div
         ref={windowRef}
         class={`window ${isMaximized() ? 'window-maximized' : 'window-minimized'} ${isClosing() ? 'window-exiting' : ''}`}
         id={props.id}
@@ -113,9 +113,9 @@ export default function Window_IC(props: WindowProps) {
           <div class="window-title-bar">
             <span class="window-title">{props.title || props.contentKey || 'Window'}</span>
           </div>
-          
-          <Domain 
-            id={`${props.id}-header-nav`} 
+
+          <Domain
+            id={`${props.id}-header-nav`}
             layoutMode="list-horizontal"
             class="window-header-domain"
           >
@@ -129,7 +129,7 @@ export default function Window_IC(props: WindowProps) {
                 <span class="window-btn-icon">−</span>
               </Button_IC>
             </div>
-            
+
             {/* Maximize/Restore Toggle Button */}
             <div class="window-header-subcontainer window-header-subcontainer-2">
               <Button_IC
@@ -140,7 +140,7 @@ export default function Window_IC(props: WindowProps) {
                 <span class="window-btn-icon">{isMaximized() ? '❐' : '□'}</span>
               </Button_IC>
             </div>
-            
+
             {/* Close Button */}
             <div class="window-header-subcontainer window-header-subcontainer-3">
               <Button_IC
@@ -153,7 +153,7 @@ export default function Window_IC(props: WindowProps) {
             </div>
           </Domain>
         </div>
-        
+
         {/* Window Body */}
         <div class="window-body">
           {props.children}

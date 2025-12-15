@@ -9,14 +9,21 @@ mod input_handler;
 // State management module
 mod state;
 
+// PTY terminal module
+mod pty;
+
 use asset_loader::{clear_asset_cache, get_asset_cache_path, is_asset_cached, load_asset};
-use input_handler::{DomainNavigator, LayoutMode, ListDirection, GateDirection, Rect, WASDKey, NavigationResult, ElementType};
-use state::StateManager;
-use state::window::{WindowInstance, WindowState};
-use std::sync::{Mutex, Arc};
-use tauri::{State, Manager, AppHandle, Emitter};
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use input_handler::{
+    DomainNavigator, ElementType, GateDirection, LayoutMode, ListDirection, NavigationResult, Rect,
+    WASDKey,
+};
+use pty::PtyManager;
 use serde::Serialize;
+use state::window::{WindowInstance, WindowState};
+use state::StateManager;
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 // Event payload types for frontend communication
 #[derive(Clone, Serialize)]
@@ -66,7 +73,7 @@ fn spawn_window(
     state: State<Mutex<StateManager>>,
 ) -> Result<WindowInstance, String> {
     let mut manager = state.lock().map_err(|e| e.to_string())?;
-    
+
     match manager.spawn_window(content_key, source_element_id, source_domain_id) {
         Some(window) => {
             // Emit event
@@ -74,7 +81,7 @@ fn spawn_window(
                 .map_err(|e| e.to_string())?;
             Ok(window)
         }
-        None => Err("No available slots - both compositor slots are occupied".to_string())
+        None => Err("No available slots - both compositor slots are occupied".to_string()),
     }
 }
 
@@ -85,7 +92,7 @@ fn close_window(
     state: State<Mutex<StateManager>>,
 ) -> Result<(), String> {
     let mut manager = state.lock().map_err(|e| e.to_string())?;
-    
+
     // First, set window state to Closing (triggers animation)
     if let Some(window) = manager.set_window_state(&id, WindowState::Closing) {
         // Emit state change event so frontend updates
@@ -94,7 +101,7 @@ fn close_window(
     } else {
         return Err(format!("Window {} not found", id));
     }
-    
+
     Ok(())
 }
 
@@ -106,24 +113,29 @@ fn remove_window(
 ) -> Result<(), String> {
     let mut manager = state.lock().map_err(|e| e.to_string())?;
     let closed_window = manager.close_window(&id);
-    
+
     // Emit event
-    app.emit("window-closed", id)
-        .map_err(|e| e.to_string())?;
-    
+    app.emit("window-closed", id).map_err(|e| e.to_string())?;
+
     // If window had a source element, try to return focus to it
     if let Some(win) = closed_window {
-        if let (Some(source_domain), Some(source_element)) = (win.source_domain_id, win.source_element_id) {
+        if let (Some(source_domain), Some(source_element)) =
+            (win.source_domain_id, win.source_element_id)
+        {
             // We use a small delay to ensure the DOM update has processed the window removal
             // This is handled via event emission to the frontend controller
-            app.emit("return-focus", CursorMovedPayload {
-                domain_id: source_domain,
-                element_id: source_element,
-                element_type: "Button".to_string(), // Assuming button triggered it
-            }).map_err(|e| e.to_string())?;
+            app.emit(
+                "return-focus",
+                CursorMovedPayload {
+                    domain_id: source_domain,
+                    element_id: source_element,
+                    element_type: "Button".to_string(), // Assuming button triggered it
+                },
+            )
+            .map_err(|e| e.to_string())?;
         }
     }
-        
+
     Ok(())
 }
 
@@ -143,7 +155,7 @@ fn set_window_state(
     };
 
     let mut manager = state.lock().map_err(|e| e.to_string())?;
-    
+
     if let Some(window) = manager.set_window_state(&id, new_state) {
         app.emit("window-state-changed", window)
             .map_err(|e| e.to_string())?;
@@ -151,6 +163,91 @@ fn set_window_state(
     } else {
         Err(format!("Window not found: {}", id))
     }
+}
+
+// ===== PTY Terminal Commands =====
+
+/// Spawn a new PTY session for a terminal
+#[tauri::command]
+fn pty_spawn(session_id: String, state: State<Mutex<PtyManager>>) -> Result<String, String> {
+    println!(
+        "[TAURI CMD] pty_spawn called with session_id: {}",
+        session_id
+    );
+    let mut manager = state.lock().map_err(|e| {
+        println!("[TAURI CMD] ERROR: Failed to lock PtyManager: {}", e);
+        e.to_string()
+    })?;
+    println!("[TAURI CMD] Got PtyManager lock, calling spawn...");
+    let result = manager.spawn(session_id);
+    println!("[TAURI CMD] pty_spawn result: {:?}", result.is_ok());
+    result
+}
+
+/// Write data to a PTY session
+#[tauri::command]
+fn pty_write(
+    session_id: String,
+    data: String,
+    state: State<Mutex<PtyManager>>,
+) -> Result<(), String> {
+    println!("[TAURI CMD] pty_write called for session: {}", session_id);
+    let manager = state.lock().map_err(|e| {
+        println!("[TAURI CMD] ERROR: Failed to lock PtyManager: {}", e);
+        e.to_string()
+    })?;
+    manager.write(&session_id, data.as_bytes())
+}
+
+/// Read available data from a PTY session
+#[tauri::command]
+fn pty_read(session_id: String, state: State<Mutex<PtyManager>>) -> Result<String, String> {
+    // Don't log every read since it polls frequently
+    let manager = state.lock().map_err(|e| e.to_string())?;
+    let bytes = manager.read(&session_id)?;
+
+    // Convert bytes to string, handling potential encoding issues
+    String::from_utf8(bytes).map_err(|e| format!("UTF-8 decode error: {}", e))
+}
+
+/// Resize a PTY session
+#[tauri::command]
+fn pty_resize(
+    session_id: String,
+    rows: u16,
+    cols: u16,
+    state: State<Mutex<PtyManager>>,
+) -> Result<(), String> {
+    println!(
+        "[TAURI CMD] pty_resize called for session: {}, {}x{}",
+        session_id, cols, rows
+    );
+    let manager = state.lock().map_err(|e| {
+        println!("[TAURI CMD] ERROR: Failed to lock PtyManager: {}", e);
+        e.to_string()
+    })?;
+    manager.resize(&session_id, rows, cols)
+}
+
+/// Close a PTY session
+#[tauri::command]
+fn pty_close(session_id: String, state: State<Mutex<PtyManager>>) -> Result<(), String> {
+    println!("[TAURI CMD] pty_close called for session: {}", session_id);
+    let mut manager = state.lock().map_err(|e| {
+        println!("[TAURI CMD] ERROR: Failed to lock PtyManager: {}", e);
+        e.to_string()
+    })?;
+    manager.close(&session_id)
+}
+
+/// Get the system status banner for display on terminal startup
+#[tauri::command]
+fn get_system_banner(session_id: String) -> String {
+    println!(
+        "[TAURI CMD] get_system_banner called for session: {}",
+        session_id
+    );
+    pty::generate_system_banner(&session_id)
 }
 
 // ===== Domain Navigation Commands =====
@@ -178,7 +275,9 @@ fn register_domain(
         _ => return Err(format!("Unknown layout mode: {}", layout_mode)),
     };
 
-    let mut navigator = state.domain_navigator.lock()
+    let mut navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     navigator.register_domain(domain_id, parent_domain, layout)
@@ -187,7 +286,9 @@ fn register_domain(
 /// Unregister a domain
 #[tauri::command]
 fn unregister_domain(domain_id: String, state: State<AppState>) -> Result<(), String> {
-    let mut navigator = state.domain_navigator.lock()
+    let mut navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     navigator.unregister_domain(&domain_id)
@@ -203,9 +304,14 @@ fn register_button(
     app: AppHandle,
     state: State<AppState>,
 ) -> Result<(), String> {
-    println!("[TAURI CMD] register_button called: domain={}, button={}, order={}", domain_id, button_id, order);
-    
-    let mut navigator = state.domain_navigator.lock()
+    println!(
+        "[TAURI CMD] register_button called: domain={}, button={}, order={}",
+        domain_id, button_id, order
+    );
+
+    let mut navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     // Get cursor position before registration
@@ -218,27 +324,39 @@ fn register_button(
     // Check if cursor was restored (position changed to this button)
     let cursor_after = navigator.get_cursor_position();
     println!("[TAURI CMD] Cursor after: {:?}", cursor_after);
-    
+
     if let Some(cursor) = &cursor_after {
         // If cursor changed and is now on this button, emit event
         let cursor_changed = match &cursor_before {
-            Some(before) => before.element_id != cursor.element_id || before.domain_id != cursor.domain_id,
+            Some(before) => {
+                before.element_id != cursor.element_id || before.domain_id != cursor.domain_id
+            }
             None => true,
         };
-        
-        println!("[TAURI CMD] Cursor changed: {}, matches button: {}", cursor_changed, cursor.element_id == button_id);
-        
+
+        println!(
+            "[TAURI CMD] Cursor changed: {}, matches button: {}",
+            cursor_changed,
+            cursor.element_id == button_id
+        );
+
         if cursor_changed && cursor.element_id == button_id && cursor.domain_id == domain_id {
-            println!("[TAURI CMD] ✓ EMITTING cursor-moved event for {}", button_id);
+            println!(
+                "[TAURI CMD] ✓ EMITTING cursor-moved event for {}",
+                button_id
+            );
             let type_str = match cursor.element_type {
                 ElementType::Button => "Button",
                 ElementType::Gate => "Gate",
             };
-            let _ = app.emit("cursor-moved", CursorMovedPayload {
-                domain_id: cursor.domain_id.clone(),
-                element_id: cursor.element_id.clone(),
-                element_type: type_str.to_string(),
-            });
+            let _ = app.emit(
+                "cursor-moved",
+                CursorMovedPayload {
+                    domain_id: cursor.domain_id.clone(),
+                    element_id: cursor.element_id.clone(),
+                    element_type: type_str.to_string(),
+                },
+            );
         }
     }
 
@@ -252,9 +370,14 @@ fn unregister_button(
     button_id: String,
     state: State<AppState>,
 ) -> Result<(), String> {
-    println!("[TAURI CMD] unregister_button called: domain={}, button={}", domain_id, button_id);
-    
-    let mut navigator = state.domain_navigator.lock()
+    println!(
+        "[TAURI CMD] unregister_button called: domain={}, button={}",
+        domain_id, button_id
+    );
+
+    let mut navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     navigator.unregister_button(&domain_id, &button_id)
@@ -268,7 +391,9 @@ fn update_button_bounds(
     bounds: Option<Rect>,
     state: State<AppState>,
 ) -> Result<(), String> {
-    let mut navigator = state.domain_navigator.lock()
+    let mut navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     navigator.update_button_bounds(&domain_id, &button_id, bounds)
@@ -287,7 +412,9 @@ fn register_gate(
     let gate_dir = GateDirection::from_str(&direction)
         .ok_or_else(|| format!("Invalid gate direction: {}", direction))?;
 
-    let mut navigator = state.domain_navigator.lock()
+    let mut navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     navigator.register_gate(gate_id, source_domain, target_domain, gate_dir, entry_point)
@@ -300,7 +427,9 @@ fn unregister_gate(
     gate_id: String,
     state: State<AppState>,
 ) -> Result<(), String> {
-    let mut navigator = state.domain_navigator.lock()
+    let mut navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     navigator.unregister_gate(&domain_id, &gate_id)
@@ -309,7 +438,9 @@ fn unregister_gate(
 /// Set the active domain
 #[tauri::command]
 fn set_active_domain(domain_id: String, state: State<AppState>) -> Result<(), String> {
-    let mut navigator = state.domain_navigator.lock()
+    let mut navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     navigator.set_active_domain(domain_id)
@@ -318,7 +449,9 @@ fn set_active_domain(domain_id: String, state: State<AppState>) -> Result<(), St
 /// Get the current active domain ID
 #[tauri::command]
 fn get_active_domain(state: State<AppState>) -> Result<Option<String>, String> {
-    let navigator = state.domain_navigator.lock()
+    let navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     Ok(navigator.get_active_domain_id())
@@ -326,33 +459,51 @@ fn get_active_domain(state: State<AppState>) -> Result<Option<String>, String> {
 
 /// Handle WASD keyboard input - processes navigation and emits events to frontend
 #[tauri::command]
-fn handle_wasd_input(key: String, app: AppHandle, state: State<AppState>) -> Result<NavigationResult, String> {
-    let wasd_key = WASDKey::from_str(&key)
-        .ok_or_else(|| format!("Invalid WASD key: {}", key))?;
+fn handle_wasd_input(
+    key: String,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<NavigationResult, String> {
+    let wasd_key = WASDKey::from_str(&key).ok_or_else(|| format!("Invalid WASD key: {}", key))?;
 
-    let mut navigator = state.domain_navigator.lock()
+    let mut navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     let result = navigator.handle_wasd_input(wasd_key.clone());
-    
+
     // Emit appropriate event based on navigation result
     match &result {
-        NavigationResult::CursorMoved { domain_id, element_id, element_type } => {
+        NavigationResult::CursorMoved {
+            domain_id,
+            element_id,
+            element_type,
+        } => {
             let type_str = match element_type {
                 ElementType::Button => "Button",
                 ElementType::Gate => "Gate",
             };
-            let _ = app.emit("cursor-moved", CursorMovedPayload {
-                domain_id: domain_id.clone(),
-                element_id: element_id.clone(),
-                element_type: type_str.to_string(),
-            });
+            let _ = app.emit(
+                "cursor-moved",
+                CursorMovedPayload {
+                    domain_id: domain_id.clone(),
+                    element_id: element_id.clone(),
+                    element_type: type_str.to_string(),
+                },
+            );
         }
-        NavigationResult::AtGate { gate_id, target_domain } => {
-            let _ = app.emit("at-gate", AtGatePayload {
-                gate_id: gate_id.clone(),
-                target_domain: target_domain.clone(),
-            });
+        NavigationResult::AtGate {
+            gate_id,
+            target_domain,
+        } => {
+            let _ = app.emit(
+                "at-gate",
+                AtGatePayload {
+                    gate_id: gate_id.clone(),
+                    target_domain: target_domain.clone(),
+                },
+            );
         }
         NavigationResult::BoundaryReached => {
             let direction = match wasd_key {
@@ -361,34 +512,45 @@ fn handle_wasd_input(key: String, app: AppHandle, state: State<AppState>) -> Res
                 WASDKey::S => "down",
                 WASDKey::D => "right",
             };
-            let _ = app.emit("boundary-reached", BoundaryReachedPayload {
-                direction: direction.to_string(),
-            });
+            let _ = app.emit(
+                "boundary-reached",
+                BoundaryReachedPayload {
+                    direction: direction.to_string(),
+                },
+            );
         }
         NavigationResult::NoActiveDomain => {
             // No event needed - this is a state issue
         }
-        NavigationResult::DomainSwitched { from_domain, to_domain, new_element_id } => {
-            let _ = app.emit("domain-switched", DomainSwitchedPayload {
-                from_domain: from_domain.clone(),
-                to_domain: to_domain.clone(),
-                new_element_id: new_element_id.clone(),
-            });
+        NavigationResult::DomainSwitched {
+            from_domain,
+            to_domain,
+            new_element_id,
+        } => {
+            let _ = app.emit(
+                "domain-switched",
+                DomainSwitchedPayload {
+                    from_domain: from_domain.clone(),
+                    to_domain: to_domain.clone(),
+                    new_element_id: new_element_id.clone(),
+                },
+            );
         }
         NavigationResult::Error { message: _ } => {
             // Errors are returned, not emitted
         }
     }
-    
+
     Ok(result)
 }
 
 /// Toggle fullscreen mode (F11)
 #[tauri::command]
 fn toggle_fullscreen(app: tauri::AppHandle) -> Result<bool, String> {
-    let window = app.get_webview_window("main")
+    let window = app
+        .get_webview_window("main")
         .ok_or_else(|| "Main window not found".to_string())?;
-    
+
     let is_fullscreen = window
         .is_fullscreen()
         .map_err(|e| format!("Failed to check fullscreen state: {}", e))?;
@@ -409,24 +571,37 @@ fn toggle_fullscreen(app: tauri::AppHandle) -> Result<bool, String> {
 /// Switch to the domain at the current gate - emits domain-switched event
 #[tauri::command]
 fn switch_domain(app: AppHandle, state: State<AppState>) -> Result<NavigationResult, String> {
-    let mut navigator = state.domain_navigator.lock()
+    let mut navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     let result = navigator.switch_domain();
-    
+
     // Emit event on successful domain switch
-    if let NavigationResult::DomainSwitched { from_domain, to_domain, new_element_id } = &result {
-        let _ = app.emit("domain-switched", DomainSwitchedPayload {
-            from_domain: from_domain.clone(),
-            to_domain: to_domain.clone(),
-            new_element_id: new_element_id.clone(),
-        });
+    if let NavigationResult::DomainSwitched {
+        from_domain,
+        to_domain,
+        new_element_id,
+    } = &result
+    {
+        let _ = app.emit(
+            "domain-switched",
+            DomainSwitchedPayload {
+                from_domain: from_domain.clone(),
+                to_domain: to_domain.clone(),
+                new_element_id: new_element_id.clone(),
+            },
+        );
         // Also emit cursor-moved for the new position
-        let _ = app.emit("cursor-moved", CursorMovedPayload {
-            domain_id: to_domain.clone(),
-            element_id: new_element_id.clone(),
-            element_type: "Button".to_string(),
-        });
+        let _ = app.emit(
+            "cursor-moved",
+            CursorMovedPayload {
+                domain_id: to_domain.clone(),
+                element_id: new_element_id.clone(),
+                element_type: "Button".to_string(),
+            },
+        );
     }
 
     Ok(result)
@@ -435,7 +610,9 @@ fn switch_domain(app: AppHandle, state: State<AppState>) -> Result<NavigationRes
 /// Emit the current cursor position - useful for initial setup
 #[tauri::command]
 fn emit_cursor_position(app: AppHandle, state: State<AppState>) -> Result<bool, String> {
-    let navigator = state.domain_navigator.lock()
+    let navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     if let Some(cursor) = navigator.get_cursor_position() {
@@ -443,11 +620,14 @@ fn emit_cursor_position(app: AppHandle, state: State<AppState>) -> Result<bool, 
             ElementType::Button => "Button",
             ElementType::Gate => "Gate",
         };
-        let _ = app.emit("cursor-moved", CursorMovedPayload {
-            domain_id: cursor.domain_id,
-            element_id: cursor.element_id,
-            element_type: type_str.to_string(),
-        });
+        let _ = app.emit(
+            "cursor-moved",
+            CursorMovedPayload {
+                domain_id: cursor.domain_id,
+                element_id: cursor.element_id,
+                element_type: type_str.to_string(),
+            },
+        );
         Ok(true)
     } else {
         Ok(false)
@@ -457,12 +637,13 @@ fn emit_cursor_position(app: AppHandle, state: State<AppState>) -> Result<bool, 
 /// Get current cursor position
 #[tauri::command]
 fn get_cursor_position(state: State<AppState>) -> Result<serde_json::Value, String> {
-    let navigator = state.domain_navigator.lock()
+    let navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     match navigator.get_cursor_position() {
-        Some(pos) => serde_json::to_value(pos)
-            .map_err(|e| format!("Serialization error: {}", e)),
+        Some(pos) => serde_json::to_value(pos).map_err(|e| format!("Serialization error: {}", e)),
         None => Ok(serde_json::Value::Null),
     }
 }
@@ -473,24 +654,29 @@ fn set_cursor_position(
     domain_id: String,
     element_id: String,
     app: AppHandle,
-    state: State<AppState>
+    state: State<AppState>,
 ) -> Result<(), String> {
-    let mut navigator = state.domain_navigator.lock()
+    let mut navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     let element_type = navigator.set_cursor_position(&domain_id, &element_id)?;
-    
+
     // Emit event so frontend updates (clearing previous focus)
     let type_str = match element_type {
         ElementType::Button => "Button",
         ElementType::Gate => "Gate",
     };
-    
-    let _ = app.emit("cursor-moved", CursorMovedPayload {
-        domain_id,
-        element_id,
-        element_type: type_str.to_string(),
-    });
+
+    let _ = app.emit(
+        "cursor-moved",
+        CursorMovedPayload {
+            domain_id,
+            element_id,
+            element_type: type_str.to_string(),
+        },
+    );
 
     Ok(())
 }
@@ -517,7 +703,9 @@ fn update_domain_layout(
         _ => return Err(format!("Unknown layout mode: {}", layout_mode)),
     };
 
-    let mut navigator = state.domain_navigator.lock()
+    let mut navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     navigator.update_layout_mode(&domain_id, layout)
@@ -526,7 +714,9 @@ fn update_domain_layout(
 /// Get all domain IDs (for debugging)
 #[tauri::command]
 fn get_all_domains(state: State<AppState>) -> Result<Vec<String>, String> {
-    let navigator = state.domain_navigator.lock()
+    let navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     Ok(navigator.get_all_domain_ids())
@@ -535,12 +725,15 @@ fn get_all_domains(state: State<AppState>) -> Result<Vec<String>, String> {
 /// Get detailed domain info for debugging
 #[tauri::command]
 fn debug_domain(domain_id: String, state: State<AppState>) -> Result<serde_json::Value, String> {
-    let navigator = state.domain_navigator.lock()
+    let navigator = state
+        .domain_navigator
+        .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
     match navigator.get_domain_info(&domain_id) {
-        Some(domain) => serde_json::to_value(domain)
-            .map_err(|e| format!("Serialization error: {}", e)),
+        Some(domain) => {
+            serde_json::to_value(domain).map_err(|e| format!("Serialization error: {}", e))
+        }
         None => Err(format!("Domain '{}' not found", domain_id)),
     }
 }
@@ -556,25 +749,38 @@ fn process_wasd_navigation(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigato
     };
 
     let result = nav.handle_wasd_input(key.clone());
-    
+
     // Emit appropriate event based on navigation result
     match &result {
-        NavigationResult::CursorMoved { domain_id, element_id, element_type } => {
+        NavigationResult::CursorMoved {
+            domain_id,
+            element_id,
+            element_type,
+        } => {
             let type_str = match element_type {
                 ElementType::Button => "Button",
                 ElementType::Gate => "Gate",
             };
-            let _ = app.emit("cursor-moved", CursorMovedPayload {
-                domain_id: domain_id.clone(),
-                element_id: element_id.clone(),
-                element_type: type_str.to_string(),
-            });
+            let _ = app.emit(
+                "cursor-moved",
+                CursorMovedPayload {
+                    domain_id: domain_id.clone(),
+                    element_id: element_id.clone(),
+                    element_type: type_str.to_string(),
+                },
+            );
         }
-        NavigationResult::AtGate { gate_id, target_domain } => {
-            let _ = app.emit("at-gate", AtGatePayload {
-                gate_id: gate_id.clone(),
-                target_domain: target_domain.clone(),
-            });
+        NavigationResult::AtGate {
+            gate_id,
+            target_domain,
+        } => {
+            let _ = app.emit(
+                "at-gate",
+                AtGatePayload {
+                    gate_id: gate_id.clone(),
+                    target_domain: target_domain.clone(),
+                },
+            );
         }
         NavigationResult::BoundaryReached => {
             let direction = match key {
@@ -583,9 +789,12 @@ fn process_wasd_navigation(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigato
                 WASDKey::S => "down",
                 WASDKey::D => "right",
             };
-            let _ = app.emit("boundary-reached", BoundaryReachedPayload {
-                direction: direction.to_string(),
-            });
+            let _ = app.emit(
+                "boundary-reached",
+                BoundaryReachedPayload {
+                    direction: direction.to_string(),
+                },
+            );
         }
         _ => {}
     }
@@ -602,26 +811,40 @@ fn process_activate(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigator>>) {
     if let Some(cursor) = nav.get_cursor_position() {
         if cursor.element_type == ElementType::Gate {
             let result = nav.switch_domain();
-            
-            if let NavigationResult::DomainSwitched { from_domain, to_domain, new_element_id } = &result {
-                let _ = app.emit("domain-switched", DomainSwitchedPayload {
-                    from_domain: from_domain.clone(),
-                    to_domain: to_domain.clone(),
-                    new_element_id: new_element_id.clone(),
-                });
-                let _ = app.emit("cursor-moved", CursorMovedPayload {
-                    domain_id: to_domain.clone(),
-                    element_id: new_element_id.clone(),
-                    element_type: "Button".to_string(),
-                });
+
+            if let NavigationResult::DomainSwitched {
+                from_domain,
+                to_domain,
+                new_element_id,
+            } = &result
+            {
+                let _ = app.emit(
+                    "domain-switched",
+                    DomainSwitchedPayload {
+                        from_domain: from_domain.clone(),
+                        to_domain: to_domain.clone(),
+                        new_element_id: new_element_id.clone(),
+                    },
+                );
+                let _ = app.emit(
+                    "cursor-moved",
+                    CursorMovedPayload {
+                        domain_id: to_domain.clone(),
+                        element_id: new_element_id.clone(),
+                        element_type: "Button".to_string(),
+                    },
+                );
             }
         } else {
             // Not at a gate - emit button activation event
-            let _ = app.emit("button-activate", CursorMovedPayload {
-                domain_id: cursor.domain_id,
-                element_id: cursor.element_id,
-                element_type: "Button".to_string(),
-            });
+            let _ = app.emit(
+                "button-activate",
+                CursorMovedPayload {
+                    domain_id: cursor.domain_id,
+                    element_id: cursor.element_id,
+                    element_type: "Button".to_string(),
+                },
+            );
         }
     }
 }
@@ -644,10 +867,10 @@ fn set_global_shortcuts_enabled(app: AppHandle, enabled: bool) -> Result<(), Str
     if enabled {
         // First unregister all shortcuts to avoid "already registered" errors
         let _ = app.global_shortcut().unregister_all();
-        
+
         let mut success_count = 0;
         let mut last_error = None;
-        
+
         for shortcut in default_shortcuts() {
             match app.global_shortcut().register(shortcut.clone()) {
                 Ok(_) => success_count += 1,
@@ -657,9 +880,12 @@ fn set_global_shortcuts_enabled(app: AppHandle, enabled: bool) -> Result<(), Str
                 }
             }
         }
-        
+
         if success_count > 0 {
-            println!("Global shortcuts enabled ({} keys registered)", success_count);
+            println!(
+                "Global shortcuts enabled ({} keys registered)",
+                success_count
+            );
             Ok(())
         } else if let Some(e) = last_error {
             Err(format!("Failed to register any shortcuts: {}", e))
@@ -729,11 +955,14 @@ pub fn run() {
         )
         .manage(app_state)
         .manage(Mutex::new(StateManager::new()))
+        .manage(Mutex::new(PtyManager::new()))
         .setup(|_app| {
             // NOTE: Shortcuts are NOT registered here anymore.
             // Frontend controls registration via set_global_shortcuts_enabled()
             // This prevents duplicate registrations and allows proper focus/blur handling.
-            println!("WASD navigation system initialized (shortcuts will register on window focus)");
+            println!(
+                "WASD navigation system initialized (shortcuts will register on window focus)"
+            );
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -768,6 +997,13 @@ pub fn run() {
             update_domain_layout,
             toggle_fullscreen,
             set_global_shortcuts_enabled,
+            // PTY terminal commands
+            pty_spawn,
+            pty_write,
+            pty_read,
+            pty_resize,
+            pty_close,
+            get_system_banner,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

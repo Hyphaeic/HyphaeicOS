@@ -1,6 +1,6 @@
 import "./Compositor_IC.css";
 import { JSXElement } from "solid-js";
-import { WindowInstance } from "../../store";
+import { WindowInstance } from "../../../store";
 
 interface CompositorProps {
   /** Content for the left subcontainer */
@@ -30,16 +30,14 @@ export default function Compositor_IC(props: CompositorProps) {
   return (
     <div class="compositor">
       {/* Left subcontainer - first window slot */}
-      <div class={`compositor-subcontainer compositor-subcontainer-left ${
-        isLeftMaximized() ? 'compositor-subcontainer-maximized' : ''
-      } ${isRightMaximized() ? 'compositor-subcontainer-hidden' : ''}`}>
+      <div class={`compositor-subcontainer compositor-subcontainer-left ${isLeftMaximized() ? 'compositor-subcontainer-maximized' : ''
+        } ${isRightMaximized() ? 'compositor-subcontainer-hidden' : ''}`}>
         {props.leftContent}
       </div>
-      
+
       {/* Right subcontainer - second window slot */}
-      <div class={`compositor-subcontainer compositor-subcontainer-right ${
-        isRightMaximized() ? 'compositor-subcontainer-maximized' : ''
-      } ${isLeftMaximized() ? 'compositor-subcontainer-hidden' : ''}`}>
+      <div class={`compositor-subcontainer compositor-subcontainer-right ${isRightMaximized() ? 'compositor-subcontainer-maximized' : ''
+        } ${isLeftMaximized() ? 'compositor-subcontainer-hidden' : ''}`}>
         {props.rightContent}
       </div>
     </div>

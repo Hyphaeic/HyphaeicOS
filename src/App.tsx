@@ -1,5 +1,5 @@
-import BackgroundIC from "./HMI/Background/background_IC";
-import Interface from "./HMI/A_Interface/Interface";
+import BackgroundIC from "./HMI/core/Background/background_IC";
+import Interface from "./HMI/core/A_Interface/Interface";
 import "./App.css";
 
 // ============================================================================

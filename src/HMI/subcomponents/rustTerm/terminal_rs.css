@@ -1,0 +1,114 @@
+/* ============================================================================
+   TERMINAL_RS - Retro Terminal Styling
+   ============================================================================
+   Features:
+   - Fills parent container completely
+   - Monospace font with retro aesthetics
+   - Dark terminal colors (black bg, green/white text)
+   - Blinking cursor effect
+   ============================================================================ */
+
+.terminal-rs {
+    width: 100%;
+    height: 100%;
+    background-color: #0a0a0a;
+    overflow: auto;
+    position: relative;
+    cursor: text;
+
+    /* Subtle scan lines effect */
+    background-image:
+        linear-gradient(rgba(18, 16, 16, 0) 50%,
+            rgba(0, 0, 0, 0.1) 50%);
+    background-size: 100% 4px;
+}
+
+/* Hidden input field for capturing keyboard */
+.terminal-input {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+    resize: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    color: transparent;
+    outline: none;
+    overflow: hidden;
+}
+
+/* Focus the visible terminal when input is focused */
+.terminal-rs:has(.terminal-input:focus) {
+    outline: 1px solid rgba(0, 255, 0, 0.3);
+}
+
+/* Terminal output display */
+.terminal-output {
+    margin: 0;
+    padding: 12px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 14px;
+    line-height: 1.15;
+    color: #00ff00;
+    white-space: pre-wrap;
+    word-break: break-all;
+
+    /* Slight CRT glow effect */
+    text-shadow: 0 0 2px rgba(0, 255, 0, 0.5);
+
+    /* Ensure minimum content */
+    min-height: 100%;
+}
+
+/* Blinking cursor */
+.terminal-cursor {
+    color: #00ff00;
+    animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0;
+    }
+}
+
+/* Box drawing characters styling - keep original color for the banner */
+.terminal-output::first-line {
+    color: #00ff00;
+}
+
+/* Scrollbar styling */
+.terminal-rs::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.terminal-rs::-webkit-scrollbar-track {
+    background: #0a0a0a;
+}
+
+.terminal-rs::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 4px;
+}
+
+.terminal-rs::-webkit-scrollbar-thumb:hover {
+    background: #444;
+}
+
+/* Selection styling */
+.terminal-output::selection {
+    background-color: rgba(0, 255, 0, 0.3);
+    color: #fff;
+}

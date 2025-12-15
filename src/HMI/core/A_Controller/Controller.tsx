@@ -1,7 +1,7 @@
 import { onMount, onCleanup, JSX } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { addWindow, removeWindow, updateWindow, WindowInstance } from "../store";
+import { addWindow, removeWindow, updateWindow, WindowInstance } from "../../store";
 import { findNavigationTarget } from "./navigation_helpers";
 
 // ============================================================================
@@ -85,14 +85,14 @@ const getControllerState = (): ControllerState => {
  * DOM listeners are replaced on each mount to pick up code changes.
  */
 export default function Controller(props: ControllerProps) {
-  
+
   onMount(() => {
     const state = getControllerState();
 
     // -----------------------------------------------------------------------
     // DOM LISTENERS (replaced on each mount for HMR)
     // -----------------------------------------------------------------------
-    
+
     // Clean up any existing DOM listeners from previous instance
     if (state.domCleanup) {
       state.domCleanup();
@@ -107,7 +107,7 @@ export default function Controller(props: ControllerProps) {
         return;
       }
       if (e.key === 'F12') return;
-      
+
       if (import.meta.env.DEV && e.key.toLowerCase() === 'x' && !e.ctrlKey && !e.altKey && !e.metaKey) {
         e.preventDefault();
         try {
@@ -125,7 +125,7 @@ export default function Controller(props: ControllerProps) {
     const enableShortcuts = async () => {
       if (isToggling) return;
       isToggling = true;
-      try { await invoke('set_global_shortcuts_enabled', { enabled: true }); } 
+      try { await invoke('set_global_shortcuts_enabled', { enabled: true }); }
       catch (e) { console.error(e); }
       finally { setTimeout(() => { isToggling = false; }, 100); }
     };
@@ -158,16 +158,16 @@ export default function Controller(props: ControllerProps) {
     // -----------------------------------------------------------------------
     // TAURI LISTENERS (set up ONCE, persist until page refresh)
     // -----------------------------------------------------------------------
-    
+
     if (!state.tauriListenersActive) {
       state.tauriListenersActive = true;
-      
+
       (async () => {
         try {
           // Activation (Rust -> DOM Click)
           const u1 = await listen<ElementActivatedPayload>('button-activate', (event) => {
             const { element_id } = event.payload;
-            
+
             // Trigger the click event on the DOM element
             // The component's onClick handler will invoke the appropriate backend command
             const target = document.getElementById(element_id);
@@ -208,10 +208,10 @@ export default function Controller(props: ControllerProps) {
             try {
               // Wait for DOM updates to process window removal
               await new Promise(r => setTimeout(r, 50));
-              
+
               // Set active domain first
               await invoke('set_active_domain', { domainId: event.payload.domain_id });
-              
+
               // Then emit cursor position to trigger visual update
               await invoke('emit_cursor_position');
             } catch (e) {
@@ -237,11 +237,11 @@ export default function Controller(props: ControllerProps) {
             window.dispatchEvent(new CustomEvent('boundary-reached', { detail: event.payload }));
             try {
               const activeDomain = await invoke('get_active_domain') as string | null;
-              
+
               if (activeDomain) {
                 const domains = await invoke('get_all_domains') as string[];
                 const targetDomain = await findNavigationTarget(event.payload.direction, activeDomain, domains);
-                
+
                 if (targetDomain) {
                   await invoke('set_active_domain', { domainId: targetDomain });
                   await invoke('emit_cursor_position');
@@ -276,7 +276,7 @@ export default function Controller(props: ControllerProps) {
               }
             }
           }
-        } catch {}
+        } catch { }
       }, 350);
     }
   });
