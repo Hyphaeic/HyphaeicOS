@@ -63,7 +63,8 @@ impl DomainNavigator {
     }
 
     /// Unregister a domain
-    pub fn unregister_domain(&mut self, domain_id: &str) -> Result<(), String> {
+    /// Unregister a domain
+    pub fn unregister_domain(&mut self, domain_id: &str) -> Result<Option<CursorPosition>, String> {
         println!("[UNREGISTER_DOMAIN] domain: {}", domain_id);
 
         if !self.domains.contains_key(domain_id) {
@@ -78,11 +79,32 @@ impl DomainNavigator {
             }
         }
 
+        let mut cursor_change = None;
+
         // If this was the active domain, save it and clear active state
         if self.active_domain_id.as_ref() == Some(&domain_id.to_string()) {
             self.saved_active_domain = Some(domain_id.to_string());
             self.active_domain_id = None;
             self.cursor_position = None;
+
+            // Fallback: Default to OSBar if active domain is lost
+            // This prevents "lost navigation" when closing windows
+            if let Some(osbar) = self.domains.get("osbar-nav") {
+                if !osbar.buttons.is_empty() {
+                    println!("[UNREGISTER_DOMAIN] Active domain lost, falling back to osbar-nav");
+                    self.active_domain_id = Some("osbar-nav".to_string());
+
+                    if let Some(first_btn) = osbar.buttons.first() {
+                        let new_cursor = CursorPosition {
+                            domain_id: "osbar-nav".to_string(),
+                            element_id: first_btn.id.clone(),
+                            element_type: ElementType::Button,
+                        };
+                        self.cursor_position = Some(new_cursor.clone());
+                        cursor_change = Some(new_cursor);
+                    }
+                }
+            }
         }
 
         self.domains.remove(domain_id);
@@ -95,7 +117,7 @@ impl DomainNavigator {
             self.saved_cursor_positions.keys().collect::<Vec<_>>()
         );
 
-        Ok(())
+        Ok(cursor_change)
     }
 
     /// Register a button within a domain
@@ -271,58 +293,60 @@ impl DomainNavigator {
         Ok(())
     }
 
-    /// Register a gate within a domain
-    pub fn register_gate(
-        &mut self,
-        gate_id: String,
-        source_domain: String,
-        target_domain: String,
-        direction: GateDirection,
-        entry_point: Option<usize>,
-    ) -> Result<(), String> {
-        let domain = self
-            .domains
-            .get_mut(&source_domain)
-            .ok_or_else(|| format!("Source domain '{}' not found", source_domain))?;
+    // DEPRECATED: Gate system replaced by spatial boundary navigation
+    // /// Register a gate within a domain
+    // pub fn register_gate(
+    //     &mut self,
+    //     gate_id: String,
+    //     source_domain: String,
+    //     target_domain: String,
+    //     direction: GateDirection,
+    //     entry_point: Option<usize>,
+    // ) -> Result<(), String> {
+    //     let domain = self
+    //         .domains
+    //         .get_mut(&source_domain)
+    //         .ok_or_else(|| format!("Source domain '{}' not found", source_domain))?;
+    //
+    //     // Check if gate already exists
+    //     if domain.gates.iter().any(|g| g.id == gate_id) {
+    //         return Err(format!(
+    //             "Gate '{}' already exists in domain '{}'",
+    //             gate_id, source_domain
+    //         ));
+    //     }
+    //
+    //     let gate = GateElement {
+    //         id: gate_id,
+    //         bounds: None,
+    //         target_domain,
+    //         direction,
+    //         entry_point,
+    //     };
+    //
+    //     domain.gates.push(gate);
+    //
+    //     Ok(())
+    // }
 
-        // Check if gate already exists
-        if domain.gates.iter().any(|g| g.id == gate_id) {
-            return Err(format!(
-                "Gate '{}' already exists in domain '{}'",
-                gate_id, source_domain
-            ));
-        }
-
-        let gate = GateElement {
-            id: gate_id,
-            bounds: None,
-            target_domain,
-            direction,
-            entry_point,
-        };
-
-        domain.gates.push(gate);
-
-        Ok(())
-    }
-
-    /// Unregister a gate
-    pub fn unregister_gate(&mut self, domain_id: &str, gate_id: &str) -> Result<(), String> {
-        let domain = self
-            .domains
-            .get_mut(domain_id)
-            .ok_or_else(|| format!("Domain '{}' not found", domain_id))?;
-
-        let index = domain
-            .gates
-            .iter()
-            .position(|g| g.id == gate_id)
-            .ok_or_else(|| format!("Gate '{}' not found in domain '{}'", gate_id, domain_id))?;
-
-        domain.gates.remove(index);
-
-        Ok(())
-    }
+    // DEPRECATED: Gate system replaced by spatial boundary navigation
+    // /// Unregister a gate
+    // pub fn unregister_gate(&mut self, domain_id: &str, gate_id: &str) -> Result<(), String> {
+    //     let domain = self
+    //         .domains
+    //         .get_mut(domain_id)
+    //         .ok_or_else(|| format!("Domain '{}' not found", domain_id))?;
+    //
+    //     let index = domain
+    //         .gates
+    //         .iter()
+    //         .position(|g| g.id == gate_id)
+    //         .ok_or_else(|| format!("Gate '{}' not found in domain '{}'", gate_id, domain_id))?;
+    //
+    //     domain.gates.remove(index);
+    //
+    //     Ok(())
+    // }
 
     /// Set the active domain
     pub fn set_active_domain(&mut self, domain_id: String) -> Result<(), String> {
@@ -368,17 +392,14 @@ impl DomainNavigator {
             .get(domain_id)
             .ok_or_else(|| format!("Domain '{}' not found", domain_id))?;
 
-        // Verify element exists and get its type
-        let element_type = if domain.buttons.iter().any(|b| b.id == element_id) {
-            ElementType::Button
-        } else if domain.gates.iter().any(|g| g.id == element_id) {
-            ElementType::Gate
-        } else {
+        // Verify element exists (buttons only, gates deprecated)
+        if !domain.buttons.iter().any(|b| b.id == element_id) {
             return Err(format!(
                 "Element '{}' not found in domain '{}'",
                 element_id, domain_id
             ));
-        };
+        }
+        let element_type = ElementType::Button;
 
         // Update active domain
         self.active_domain_id = Some(domain_id.to_string());
@@ -395,7 +416,13 @@ impl DomainNavigator {
 
     /// Handle WASD input and navigate
     pub fn handle_wasd_input(&mut self, key: WASDKey) -> NavigationResult {
+        println!(
+            "[NAV DEBUG] handle_wasd_input: key={:?}, active_domain={:?}, cursor={:?}",
+            key, self.active_domain_id, self.cursor_position
+        );
+
         let Some(active_domain_id) = self.active_domain_id.clone() else {
+            println!("[NAV DEBUG]   -> No active domain!");
             return NavigationResult::NoActiveDomain;
         };
 
@@ -449,18 +476,6 @@ impl DomainNavigator {
             };
 
             if let Some((element_type, element_id)) = element_info {
-                // Get gate target if this is a gate
-                let gate_target = if element_type == ElementType::Gate {
-                    let domain = self.domains.get(&active_domain_id).unwrap();
-                    domain
-                        .gates
-                        .iter()
-                        .find(|g| g.id == element_id)
-                        .map(|gate| gate.target_domain.clone())
-                } else {
-                    None
-                };
-
                 // Now update the domain's current index
                 if let Some(domain_mut) = self.domains.get_mut(&active_domain_id) {
                     domain_mut.current_index = new_index;
@@ -473,14 +488,6 @@ impl DomainNavigator {
                     element_type: element_type.clone(),
                 });
 
-                // Check if we're at a gate
-                if let Some(target_domain) = gate_target {
-                    return NavigationResult::AtGate {
-                        gate_id: element_id,
-                        target_domain,
-                    };
-                }
-
                 return NavigationResult::CursorMoved {
                     domain_id: active_domain_id,
                     element_id,
@@ -489,40 +496,105 @@ impl DomainNavigator {
             }
         }
 
+        // No element to navigate to within this domain - check for adjacent domains
+        // First, determine which direction is the boundary based on the key pressed
+        let boundary_direction = match key {
+            WASDKey::W => GateDirection::Top,
+            WASDKey::S => GateDirection::Bottom,
+            WASDKey::A => GateDirection::Left,
+            WASDKey::D => GateDirection::Right,
+        };
+
+        // Check if domain allows exit in this direction
+        let can_exit = {
+            let domain = self.domains.get(&active_domain_id).unwrap();
+            domain.can_exit_direction(&boundary_direction)
+        };
+
+        if !can_exit {
+            return NavigationResult::BoundaryReached;
+        }
+
+        // Try to find an adjacent domain
+        if let Some(target_domain_id) = self.find_adjacent_domain(&active_domain_id, key) {
+            return NavigationResult::DomainBoundaryCrossed {
+                from_domain: active_domain_id,
+                to_domain: target_domain_id,
+                direction: format!("{:?}", boundary_direction).to_lowercase(),
+            };
+        }
+
         NavigationResult::BoundaryReached
     }
 
-    /// Navigate using spatial positioning
+    /// Find an adjacent domain in the given direction using spatial bounds
+    fn find_adjacent_domain(&self, current_domain_id: &str, direction: WASDKey) -> Option<String> {
+        let current_domain = self.domains.get(current_domain_id)?;
+        let current_bounds = current_domain.bounds?;
+
+        println!(
+            "[NAV DEBUG] find_adjacent_domain: from='{}' direction={:?}",
+            current_domain_id, direction
+        );
+        println!(
+            "[NAV DEBUG]   current_bounds: x={}, y={}, w={}, h={}",
+            current_bounds.x, current_bounds.y, current_bounds.width, current_bounds.height
+        );
+
+        // Collect all other domains with bounds
+        let candidates: Vec<(String, Rect)> = self
+            .domains
+            .iter()
+            .filter(|(id, domain)| {
+                *id != current_domain_id && domain.bounds.is_some() && domain.element_count() > 0
+            })
+            .map(|(id, domain)| {
+                let b = domain.bounds.unwrap();
+                println!(
+                    "[NAV DEBUG]   candidate '{}': x={}, y={}, w={}, h={}, elements={}",
+                    id,
+                    b.x,
+                    b.y,
+                    b.width,
+                    b.height,
+                    domain.element_count()
+                );
+                (id.clone(), b)
+            })
+            .collect();
+
+        if candidates.is_empty() {
+            println!("[NAV DEBUG]   No candidates with bounds!");
+            return None;
+        }
+
+        // Use spatial algorithm to find nearest domain in direction
+        let result =
+            super::spatial::find_nearest_in_direction(&current_bounds, &candidates, direction);
+        println!("[NAV DEBUG]   Result: {:?}", result);
+        result
+    }
+
+    /// Navigate using spatial positioning (buttons only, gates deprecated)
     fn navigate_spatial(
         &self,
         domain: &Domain,
         current_index: usize,
         direction: WASDKey,
     ) -> Option<usize> {
-        // Get current element bounds
-        let current_element = if current_index < domain.buttons.len() {
-            domain.buttons[current_index].bounds?
-        } else {
-            let gate_index = current_index - domain.buttons.len();
-            domain.gates.get(gate_index)?.bounds?
-        };
+        // Get current element bounds (buttons only)
+        if current_index >= domain.buttons.len() {
+            return None;
+        }
+        let current_element = domain.buttons[current_index].bounds?;
 
-        // Collect all candidate elements with bounds
+        // Collect all candidate buttons with bounds
         let mut candidates: Vec<(String, Rect)> = Vec::new();
 
         for (idx, button) in domain.buttons.iter().enumerate() {
             if idx != current_index {
                 if let Some(bounds) = button.bounds {
                     candidates.push((button.id.clone(), bounds));
-                }
-            }
-        }
-
-        for (idx, gate) in domain.gates.iter().enumerate() {
-            let gate_idx = domain.buttons.len() + idx;
-            if gate_idx != current_index {
-                if let Some(bounds) = gate.bounds {
-                    candidates.push((gate.id.clone(), bounds));
                 }
             }
         }
@@ -534,78 +606,68 @@ impl DomainNavigator {
         domain.find_element_index(&nearest_id)
     }
 
-    /// Switch to the domain at the current gate
-    pub fn switch_domain(&mut self) -> NavigationResult {
-        let Some(cursor) = &self.cursor_position.clone() else {
-            return NavigationResult::Error {
-                message: "No cursor position".to_string(),
-            };
-        };
+    // DEPRECATED: Gate-based domain switching replaced by spatial boundary navigation
+    // See switch_to_domain() for the new implementation
 
-        // Must be at a gate to switch
-        if cursor.element_type != ElementType::Gate {
-            return NavigationResult::Error {
-                message: "Not at a gate".to_string(),
-            };
-        }
-
-        // Find the gate
-        let domain = match self.domains.get(&cursor.domain_id) {
-            Some(d) => d,
-            None => {
-                return NavigationResult::Error {
-                    message: format!("Domain '{}' not found", cursor.domain_id),
-                }
-            }
-        };
-
-        let gate = match domain.gates.iter().find(|g| g.id == cursor.element_id) {
-            Some(g) => g,
-            None => {
-                return NavigationResult::Error {
-                    message: format!("Gate '{}' not found", cursor.element_id),
-                }
-            }
-        };
-
-        let target_domain_id = gate.target_domain.clone();
-        let entry_point = gate.entry_point.unwrap_or(0);
-
+    /// Switch to a specific domain (used by spatial boundary navigation)
+    pub fn switch_to_domain(&mut self, target_domain_id: &str) -> NavigationResult {
         // Check target domain exists
-        if !self.domains.contains_key(&target_domain_id) {
+        if !self.domains.contains_key(target_domain_id) {
             return NavigationResult::Error {
                 message: format!("Target domain '{}' not found", target_domain_id),
             };
         }
 
-        // Get entry element in target domain
-        let target_domain = self.domains.get(&target_domain_id).unwrap();
-        let (element_type, element_id) = match target_domain.get_element_at_index(entry_point) {
+        let from_domain = self.active_domain_id.clone().unwrap_or_default();
+
+        // Get first element in target domain
+        let target_domain = self.domains.get(target_domain_id).unwrap();
+        let (element_type, element_id) = match target_domain.get_element_at_index(0) {
             Some(e) => e,
             None => {
                 return NavigationResult::Error {
-                    message: format!(
-                        "No element at entry point {} in domain '{}'",
-                        entry_point, target_domain_id
-                    ),
+                    message: format!("No elements in domain '{}'", target_domain_id),
                 }
             }
         };
 
         // Switch!
-        let from_domain = cursor.domain_id.clone();
-        self.active_domain_id = Some(target_domain_id.clone());
+        self.active_domain_id = Some(target_domain_id.to_string());
         self.cursor_position = Some(CursorPosition {
-            domain_id: target_domain_id.clone(),
+            domain_id: target_domain_id.to_string(),
             element_id: element_id.clone(),
             element_type: element_type.clone(),
         });
 
         NavigationResult::DomainSwitched {
             from_domain,
-            to_domain: target_domain_id,
+            to_domain: target_domain_id.to_string(),
             new_element_id: element_id,
         }
+    }
+
+    /// Update domain bounds (for spatial navigation between domains)
+    pub fn update_domain_bounds(
+        &mut self,
+        domain_id: &str,
+        bounds: Option<Rect>,
+    ) -> Result<(), String> {
+        let domain = self
+            .domains
+            .get_mut(domain_id)
+            .ok_or_else(|| format!("Domain '{}' not found", domain_id))?;
+
+        if let Some(b) = &bounds {
+            println!(
+                "[NAV DEBUG] update_domain_bounds: '{}' => x={}, y={}, w={}, h={}",
+                domain_id, b.x, b.y, b.width, b.height
+            );
+        } else {
+            println!("[NAV DEBUG] update_domain_bounds: '{}' => None", domain_id);
+        }
+
+        domain.bounds = bounds;
+        Ok(())
     }
 
     /// Get domain information for debugging

@@ -33,16 +33,24 @@ pub fn find_nearest_in_direction(
         .iter()
         .min_by(|(_, bounds_a), (_, bounds_b)| {
             let dist_a = calculate_directional_distance(
-                current_x, current_y, 
-                bounds_a.center().0, bounds_a.center().1,
-                dx, dy
+                current_x,
+                current_y,
+                bounds_a.center().0,
+                bounds_a.center().1,
+                dx,
+                dy,
             );
             let dist_b = calculate_directional_distance(
-                current_x, current_y,
-                bounds_b.center().0, bounds_b.center().1,
-                dx, dy
+                current_x,
+                current_y,
+                bounds_b.center().0,
+                bounds_b.center().1,
+                dx,
+                dy,
             );
-            dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
+            dist_a
+                .partial_cmp(&dist_b)
+                .unwrap_or(std::cmp::Ordering::Equal)
         })
         .map(|(id, _)| id.clone())
 }
@@ -61,7 +69,7 @@ fn is_in_direction(
 
     // Dot product with direction vector should be positive
     let dot_product = to_target_x * direction_x + to_target_y * direction_y;
-    
+
     // Accept any forward movement (threshold > 0.0)
     // Using > 1.0 would exclude valid targets less than 1 pixel away
     dot_product > 0.0
@@ -230,7 +238,7 @@ mod tests {
         // Middle element
         assert_eq!(navigate_list(2, total, true, WASDKey::W), Some(1));
         assert_eq!(navigate_list(2, total, true, WASDKey::S), Some(3));
-        
+
         // A/D don't work in vertical list
         assert_eq!(navigate_list(2, total, true, WASDKey::A), None);
         assert_eq!(navigate_list(2, total, true, WASDKey::D), None);
@@ -248,6 +256,3 @@ mod tests {
         assert!(!is_in_direction(0.0, 0.0, -5.0, 0.0, 1.0, 0.0)); // Left (wrong direction)
     }
 }
-
-
-

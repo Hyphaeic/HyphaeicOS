@@ -12,6 +12,9 @@ import "./Button_IS.css";
 // 3. Has NO direct Tauri event listeners (only DOM events)
 // ============================================================================
 
+// Module-level tracking to prevent HMR/dev mode double-registration
+const registeredButtons = new Set<string>();
+
 interface ButtonProps {
   /** Unique identifier for this button - MUST be unique in the DOM */
   id: string;
@@ -57,6 +60,12 @@ export default function Button_IC(props: ButtonProps) {
   // =========================================================================
 
   const registerButton = async (domainId: string) => {
+    // Check module-level guard for HMR/dev mode double-registration
+    if (registeredButtons.has(props.id)) {
+      setIsRegistered(true);
+      return;
+    }
+
     try {
       // Get button bounds for spatial navigation
       const rect = buttonRef?.getBoundingClientRect();
@@ -74,6 +83,7 @@ export default function Button_IC(props: ButtonProps) {
         order: props.order
       });
 
+      registeredButtons.add(props.id);
       setIsRegistered(true);
 
       // Check if this button is initially focused
@@ -92,6 +102,7 @@ export default function Button_IC(props: ButtonProps) {
       const msg = String(error);
       if (msg.includes("already exists")) {
         // Already registered (e.g., from hot reload)
+        registeredButtons.add(props.id);
         setIsRegistered(true);
       } else {
         console.error(`[Button_IC] Failed to register ${props.id}:`, error);
@@ -119,6 +130,9 @@ export default function Button_IC(props: ButtonProps) {
   // Unregister on cleanup
   onCleanup(async () => {
     if (!isRegistered()) return;
+
+    // Remove from module-level registry
+    registeredButtons.delete(props.id);
 
     const domainId = getDomainId();
     if (!domainId) return;

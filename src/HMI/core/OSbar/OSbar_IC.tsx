@@ -20,25 +20,29 @@ export default function OSbar_IC() {
 
   // Update layout mode on resize and notify Rust backend
   onMount(() => {
-    const handleResize = async () => {
-      const newMode = getLayoutMode();
-      const oldMode = layoutMode();
+    let resizeTimeout: number | undefined;
+    const handleResize = () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(async () => {
+        const newMode = getLayoutMode();
+        const oldMode = layoutMode();
 
-      if (newMode !== oldMode) {
-        setLayoutMode(newMode);
-        console.log(`OSbar layout changed: ${oldMode} -> ${newMode}`);
+        if (newMode !== oldMode) {
+          setLayoutMode(newMode);
+          console.log(`OSbar layout changed: ${oldMode} -> ${newMode}`);
 
-        // Update Rust backend with new layout mode
-        try {
-          await invoke('update_domain_layout', {
-            domainId: 'osbar-nav',
-            layoutMode: newMode,
-            gridColumns: null
-          });
-        } catch (error) {
-          console.error('Failed to update domain layout:', error);
+          // Update Rust backend with new layout mode
+          try {
+            await invoke('update_domain_layout', {
+              domainId: 'osbar-nav',
+              layoutMode: newMode,
+              gridColumns: null
+            });
+          } catch (error) {
+            console.error('Failed to update domain layout:', error);
+          }
         }
-      }
+      }, 100); // 100ms debounce
     };
 
     window.addEventListener('resize', handleResize);

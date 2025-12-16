@@ -121,21 +121,14 @@ export default function Controller(props: ControllerProps) {
     };
 
     // Shortcut Management
-    let isToggling = false;
     const enableShortcuts = async () => {
-      if (isToggling) return;
-      isToggling = true;
       try { await invoke('set_global_shortcuts_enabled', { enabled: true }); }
       catch (e) { console.error(e); }
-      finally { setTimeout(() => { isToggling = false; }, 100); }
     };
 
     const disableShortcuts = async () => {
-      if (isToggling) return;
-      isToggling = true;
       try { await invoke('set_global_shortcuts_enabled', { enabled: false }); }
       catch (e) { console.error(e); }
-      finally { setTimeout(() => { isToggling = false; }, 100); }
     };
 
     // Attach DOM listeners

@@ -96,7 +96,7 @@ export default function TerminalRS(props: TerminalRSProps) {
                     clearInterval(pollIntervalId);
                 }
             }
-        }, 50); // Poll every 50ms
+        }, 100); // Poll every 100ms
     };
 
     // Handle keyboard input

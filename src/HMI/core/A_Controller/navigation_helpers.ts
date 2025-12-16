@@ -1,11 +1,20 @@
 import { windowStore } from "../../store";
 
+/**
+ * @deprecated LEGACY FALLBACK - Spatial navigation is now handled in Rust.
+ * This logic only runs when boundary-reached is emitted (no adjacent domain found spatially).
+ * Kept for backwards compatibility with domains that don't report bounds.
+ */
+
 // Helper to get window domains
 export async function getWindowDomains(allDomains: string[]) {
   return allDomains.filter(d => d.endsWith('-header-nav'));
 }
 
-// Helper to find navigation target
+/**
+ * @deprecated LEGACY FALLBACK - Spatial navigation is now handled in Rust.
+ * This is called when boundary-reached event fires (no adjacent domain found spatially).
+ */
 export async function findNavigationTarget(
   direction: string,
   currentDomain: string,

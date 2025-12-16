@@ -36,6 +36,26 @@ export default function Window_IC(props: WindowProps) {
   // Once set to true, it stays true until component unmounts
   const [localIsClosing, setLocalIsClosing] = createSignal(false);
 
+  // Create a safe ID accessor that handles potential stale access during cleanup
+  // We use a signal to cache the LAST VALID ID. If props.id throws (stale), we keep the old ID.
+  // This prevents the ID from becoming "" during cleanup, which causes ghost domains.
+  const [safeId, setSafeId] = createSignal("");
+
+  // Initialize safely
+  try {
+    setSafeId(props.id);
+  } catch (e) { /* ignore */ }
+
+  createEffect(() => {
+    try {
+      const newId = props.id;
+      setSafeId(newId);
+    } catch (e) {
+      // If usage of props.id throws (stale), we simply don't update safeId.
+      // It retains the last valid UUID.
+    }
+  });
+
   // Track if window has started closing
   createEffect(() => {
     if (props.windowState === "Closing" && !localIsClosing()) {
@@ -54,7 +74,7 @@ export default function Window_IC(props: WindowProps) {
       // Only handle the fadeOutBlur animation (not fadeInBlur)
       if (e.animationName === 'fadeOutBlur' && isClosing()) {
         // Animation completed, now remove the window
-        invoke('remove_window', { id: props.id }).catch(console.error);
+        invoke('remove_window', { id: safeId() }).catch(console.error);
       }
     };
 
@@ -73,8 +93,8 @@ export default function Window_IC(props: WindowProps) {
   createEffect(() => {
     if (isClosing()) {
       const fallbackTimeout = setTimeout(() => {
-        console.warn('[Window_IC] Animation fallback triggered for', props.id);
-        invoke('remove_window', { id: props.id }).catch(console.error);
+        console.warn('[Window_IC] Animation fallback triggered for', safeId());
+        invoke('remove_window', { id: safeId() }).catch(console.error);
       }, 500); // Slightly longer than animation duration as fallback
 
       onCleanup(() => clearTimeout(fallbackTimeout));
@@ -83,21 +103,21 @@ export default function Window_IC(props: WindowProps) {
 
   // Action handlers - exposed for external triggering (keybindings)
   const handleMinimize = () => {
-    windowActions.minimize(props.id);
+    windowActions.minimize(safeId());
   };
 
   // Toggle between maximized and minimized
   const handleToggleMaximize = () => {
     if (isMaximized()) {
-      windowActions.minimize(props.id);
+      windowActions.minimize(safeId());
     } else {
-      windowActions.maximize(props.id);
+      windowActions.maximize(safeId());
     }
   };
 
   const handleClose = () => {
     // Trigger closing state (Rust will emit window-state-changed event)
-    windowActions.close(props.id);
+    windowActions.close(safeId());
   };
 
   return (
@@ -105,7 +125,7 @@ export default function Window_IC(props: WindowProps) {
       <div
         ref={windowRef}
         class={`window ${isMaximized() ? 'window-maximized' : 'window-minimized'} ${isClosing() ? 'window-exiting' : ''}`}
-        id={props.id}
+        id={safeId()}
       >
         {/* Window Header - Domain with navigation buttons */}
         <div class="window-header">
@@ -115,14 +135,14 @@ export default function Window_IC(props: WindowProps) {
           </div>
 
           <Domain
-            id={`${props.id}-header-nav`}
+            id={`${safeId()}-header-nav`}
             layoutMode="list-horizontal"
             class="window-header-domain"
           >
             {/* Minimize Button */}
             <div class="window-header-subcontainer window-header-subcontainer-1">
               <Button_IC
-                id={`${props.id}-btn-min`}
+                id={`${safeId()}-btn-min`}
                 order={0}
                 onClick={handleMinimize}
               >
@@ -133,7 +153,7 @@ export default function Window_IC(props: WindowProps) {
             {/* Maximize/Restore Toggle Button */}
             <div class="window-header-subcontainer window-header-subcontainer-2">
               <Button_IC
-                id={`${props.id}-btn-max`}
+                id={`${safeId()}-btn-max`}
                 order={1}
                 onClick={handleToggleMaximize}
               >
@@ -144,7 +164,7 @@ export default function Window_IC(props: WindowProps) {
             {/* Close Button */}
             <div class="window-header-subcontainer window-header-subcontainer-3">
               <Button_IC
-                id={`${props.id}-btn-close`}
+                id={`${safeId()}-btn-close`}
                 order={2}
                 onClick={handleClose}
               >

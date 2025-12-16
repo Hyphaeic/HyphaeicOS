@@ -14,8 +14,7 @@ mod pty;
 
 use asset_loader::{clear_asset_cache, get_asset_cache_path, is_asset_cached, load_asset};
 use input_handler::{
-    DomainNavigator, ElementType, GateDirection, LayoutMode, ListDirection, NavigationResult, Rect,
-    WASDKey,
+    DomainNavigator, ElementType, LayoutMode, ListDirection, NavigationResult, Rect, WASDKey,
 };
 use pty::PtyManager;
 use serde::Serialize;
@@ -48,6 +47,13 @@ struct DomainSwitchedPayload {
 
 #[derive(Clone, Serialize)]
 struct BoundaryReachedPayload {
+    direction: String,
+}
+
+#[derive(Clone, Serialize)]
+struct DomainBoundaryCrossedPayload {
+    from_domain: String,
+    to_domain: String,
     direction: String,
 }
 
@@ -285,13 +291,33 @@ fn register_domain(
 
 /// Unregister a domain
 #[tauri::command]
-fn unregister_domain(domain_id: String, state: State<AppState>) -> Result<(), String> {
+
+fn unregister_domain(
+    domain_id: String,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<(), String> {
     let mut navigator = state
         .domain_navigator
         .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
-    navigator.unregister_domain(&domain_id)
+    if let Some(new_cursor) = navigator.unregister_domain(&domain_id)? {
+        let type_str = match new_cursor.element_type {
+            ElementType::Button => "Button",
+            ElementType::Gate => "Gate",
+        };
+
+        let _ = app.emit(
+            "cursor-moved",
+            CursorMovedPayload {
+                domain_id: new_cursor.domain_id,
+                element_id: new_cursor.element_id,
+                element_type: type_str.to_string(),
+            },
+        );
+    }
+    Ok(())
 }
 
 /// Register a button within a domain
@@ -399,41 +425,43 @@ fn update_button_bounds(
     navigator.update_button_bounds(&domain_id, &button_id, bounds)
 }
 
-/// Register a gate within a domain
-#[tauri::command]
-fn register_gate(
-    gate_id: String,
-    source_domain: String,
-    target_domain: String,
-    direction: String,
-    entry_point: Option<usize>,
-    state: State<AppState>,
-) -> Result<(), String> {
-    let gate_dir = GateDirection::from_str(&direction)
-        .ok_or_else(|| format!("Invalid gate direction: {}", direction))?;
+// DEPRECATED: Gate system replaced by spatial boundary navigation
+// /// Register a gate within a domain
+// #[tauri::command]
+// fn register_gate(
+//     gate_id: String,
+//     source_domain: String,
+//     target_domain: String,
+//     direction: String,
+//     entry_point: Option<usize>,
+//     state: State<AppState>,
+// ) -> Result<(), String> {
+//     let gate_dir = GateDirection::from_str(&direction)
+//         .ok_or_else(|| format!("Invalid gate direction: {}", direction))?;
+//
+//     let mut navigator = state
+//         .domain_navigator
+//         .lock()
+//         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
+//
+//     navigator.register_gate(gate_id, source_domain, target_domain, gate_dir, entry_point)
+// }
 
-    let mut navigator = state
-        .domain_navigator
-        .lock()
-        .map_err(|e| format!("Failed to lock navigator: {}", e))?;
-
-    navigator.register_gate(gate_id, source_domain, target_domain, gate_dir, entry_point)
-}
-
-/// Unregister a gate
-#[tauri::command]
-fn unregister_gate(
-    domain_id: String,
-    gate_id: String,
-    state: State<AppState>,
-) -> Result<(), String> {
-    let mut navigator = state
-        .domain_navigator
-        .lock()
-        .map_err(|e| format!("Failed to lock navigator: {}", e))?;
-
-    navigator.unregister_gate(&domain_id, &gate_id)
-}
+// DEPRECATED: Gate system replaced by spatial boundary navigation
+// /// Unregister a gate
+// #[tauri::command]
+// fn unregister_gate(
+//     domain_id: String,
+//     gate_id: String,
+//     state: State<AppState>,
+// ) -> Result<(), String> {
+//     let mut navigator = state
+//         .domain_navigator
+//         .lock()
+//         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
+//
+//     navigator.unregister_gate(&domain_id, &gate_id)
+// }
 
 /// Set the active domain
 #[tauri::command]
@@ -493,18 +521,8 @@ fn handle_wasd_input(
                 },
             );
         }
-        NavigationResult::AtGate {
-            gate_id,
-            target_domain,
-        } => {
-            let _ = app.emit(
-                "at-gate",
-                AtGatePayload {
-                    gate_id: gate_id.clone(),
-                    target_domain: target_domain.clone(),
-                },
-            );
-        }
+        // DEPRECATED: AtGate removed - gates replaced by spatial boundary navigation
+        // NavigationResult::AtGate { ... } => { ... }
         NavigationResult::BoundaryReached => {
             let direction = match wasd_key {
                 WASDKey::W => "up",
@@ -539,6 +557,46 @@ fn handle_wasd_input(
         NavigationResult::Error { message: _ } => {
             // Errors are returned, not emitted
         }
+        NavigationResult::DomainBoundaryCrossed {
+            from_domain,
+            to_domain,
+            direction,
+        } => {
+            // Auto-switch to adjacent domain
+            drop(navigator); // Release lock before re-acquiring
+            let mut navigator = state
+                .domain_navigator
+                .lock()
+                .map_err(|e| format!("Failed to lock navigator: {}", e))?;
+
+            let switch_result = navigator.switch_to_domain(&to_domain);
+
+            // Emit domain-switched and cursor-moved
+            if let NavigationResult::DomainSwitched {
+                from_domain: f,
+                to_domain: t,
+                new_element_id,
+            } = &switch_result
+            {
+                let _ = app.emit(
+                    "domain-switched",
+                    DomainSwitchedPayload {
+                        from_domain: f.clone(),
+                        to_domain: t.clone(),
+                        new_element_id: new_element_id.clone(),
+                    },
+                );
+                let _ = app.emit(
+                    "cursor-moved",
+                    CursorMovedPayload {
+                        domain_id: t.clone(),
+                        element_id: new_element_id.clone(),
+                        element_type: "Button".to_string(),
+                    },
+                );
+            }
+            return Ok(switch_result);
+        }
     }
 
     Ok(result)
@@ -568,44 +626,12 @@ fn toggle_fullscreen(app: tauri::AppHandle) -> Result<bool, String> {
     }
 }
 
-/// Switch to the domain at the current gate - emits domain-switched event
-#[tauri::command]
-fn switch_domain(app: AppHandle, state: State<AppState>) -> Result<NavigationResult, String> {
-    let mut navigator = state
-        .domain_navigator
-        .lock()
-        .map_err(|e| format!("Failed to lock navigator: {}", e))?;
-
-    let result = navigator.switch_domain();
-
-    // Emit event on successful domain switch
-    if let NavigationResult::DomainSwitched {
-        from_domain,
-        to_domain,
-        new_element_id,
-    } = &result
-    {
-        let _ = app.emit(
-            "domain-switched",
-            DomainSwitchedPayload {
-                from_domain: from_domain.clone(),
-                to_domain: to_domain.clone(),
-                new_element_id: new_element_id.clone(),
-            },
-        );
-        // Also emit cursor-moved for the new position
-        let _ = app.emit(
-            "cursor-moved",
-            CursorMovedPayload {
-                domain_id: to_domain.clone(),
-                element_id: new_element_id.clone(),
-                element_type: "Button".to_string(),
-            },
-        );
-    }
-
-    Ok(result)
-}
+// DEPRECATED: Gate-based domain switching replaced by spatial boundary navigation
+// switch_to_domain is used internally by handle_wasd_input when DomainBoundaryCrossed
+// #[tauri::command]
+// fn switch_domain(app: AppHandle, state: State<AppState>) -> Result<NavigationResult, String> {
+//     ...
+// }
 
 /// Emit the current cursor position - useful for initial setup
 #[tauri::command]
@@ -711,6 +737,21 @@ fn update_domain_layout(
     navigator.update_layout_mode(&domain_id, layout)
 }
 
+/// Update domain bounds for spatial navigation between domains
+#[tauri::command]
+fn update_domain_bounds(
+    domain_id: String,
+    bounds: Option<Rect>,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let mut navigator = state
+        .domain_navigator
+        .lock()
+        .map_err(|e| format!("Failed to lock navigator: {}", e))?;
+
+    navigator.update_domain_bounds(&domain_id, bounds)
+}
+
 /// Get all domain IDs (for debugging)
 #[tauri::command]
 fn get_all_domains(state: State<AppState>) -> Result<Vec<String>, String> {
@@ -759,7 +800,7 @@ fn process_wasd_navigation(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigato
         } => {
             let type_str = match element_type {
                 ElementType::Button => "Button",
-                ElementType::Gate => "Gate",
+                ElementType::Gate => "Gate", // Deprecated but kept for type safety
             };
             let _ = app.emit(
                 "cursor-moved",
@@ -767,18 +808,6 @@ fn process_wasd_navigation(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigato
                     domain_id: domain_id.clone(),
                     element_id: element_id.clone(),
                     element_type: type_str.to_string(),
-                },
-            );
-        }
-        NavigationResult::AtGate {
-            gate_id,
-            target_domain,
-        } => {
-            let _ = app.emit(
-                "at-gate",
-                AtGatePayload {
-                    gate_id: gate_id.clone(),
-                    target_domain: target_domain.clone(),
                 },
             );
         }
@@ -796,56 +825,61 @@ fn process_wasd_navigation(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigato
                 },
             );
         }
-        _ => {}
-    }
-}
-
-/// Helper function to process Enter/Space for domain switching
-fn process_activate(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigator>>) {
-    let mut nav = match navigator.lock() {
-        Ok(n) => n,
-        Err(_) => return,
-    };
-
-    // Check if we're at a gate
-    if let Some(cursor) = nav.get_cursor_position() {
-        if cursor.element_type == ElementType::Gate {
-            let result = nav.switch_domain();
+        NavigationResult::DomainBoundaryCrossed {
+            from_domain: _,
+            to_domain,
+            direction: _,
+        } => {
+            // Auto-switch to adjacent domain
+            let switch_result = nav.switch_to_domain(to_domain);
 
             if let NavigationResult::DomainSwitched {
-                from_domain,
-                to_domain,
+                from_domain: f,
+                to_domain: t,
                 new_element_id,
-            } = &result
+            } = &switch_result
             {
                 let _ = app.emit(
                     "domain-switched",
                     DomainSwitchedPayload {
-                        from_domain: from_domain.clone(),
-                        to_domain: to_domain.clone(),
+                        from_domain: f.clone(),
+                        to_domain: t.clone(),
                         new_element_id: new_element_id.clone(),
                     },
                 );
                 let _ = app.emit(
                     "cursor-moved",
                     CursorMovedPayload {
-                        domain_id: to_domain.clone(),
+                        domain_id: t.clone(),
                         element_id: new_element_id.clone(),
                         element_type: "Button".to_string(),
                     },
                 );
             }
-        } else {
-            // Not at a gate - emit button activation event
-            let _ = app.emit(
-                "button-activate",
-                CursorMovedPayload {
-                    domain_id: cursor.domain_id,
-                    element_id: cursor.element_id,
-                    element_type: "Button".to_string(),
-                },
-            );
         }
+        _ => {}
+    }
+}
+
+/// Helper function to process Enter/Space activation
+/// With gates deprecated, this now only handles button activation
+fn process_activate(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigator>>) {
+    let nav = match navigator.lock() {
+        Ok(n) => n,
+        Err(_) => return,
+    };
+
+    // Simply emit button activation for whatever element is focused
+    if let Some(cursor) = nav.get_cursor_position() {
+        // Gates are deprecated - only buttons can be activated now
+        let _ = app.emit(
+            "button-activate",
+            CursorMovedPayload {
+                domain_id: cursor.domain_id,
+                element_id: cursor.element_id,
+                element_type: "Button".to_string(),
+            },
+        );
     }
 }
 
@@ -983,18 +1017,16 @@ pub fn run() {
             register_button,
             unregister_button,
             update_button_bounds,
-            register_gate,
-            unregister_gate,
             set_active_domain,
             get_active_domain,
             handle_wasd_input,
-            switch_domain,
             get_cursor_position,
             emit_cursor_position,
             set_cursor_position,
             get_all_domains,
             debug_domain,
             update_domain_layout,
+            update_domain_bounds,
             toggle_fullscreen,
             set_global_shortcuts_enabled,
             // PTY terminal commands

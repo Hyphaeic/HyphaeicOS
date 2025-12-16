@@ -74,7 +74,8 @@ pub enum ListDirection {
 }
 
 /// Direction of a gate (which edge of the domain)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Now used for boundary_lock in spatial navigation
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GateDirection {
     Top,
     Bottom,
@@ -110,15 +111,17 @@ pub struct ButtonElement {
     pub order: usize, // Sequential order for list/grid layouts
 }
 
-/// A gate element that allows domain switching
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GateElement {
-    pub id: String,
-    pub bounds: Option<Rect>,
-    pub target_domain: String,
-    pub direction: GateDirection,
-    pub entry_point: Option<usize>, // Index to enter in target domain
-}
+// DEPRECATED: Gate system replaced by spatial boundary navigation
+// Keeping code for potential rollback
+// /// A gate element that allows domain switching
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// pub struct GateElement {
+//     pub id: String,
+//     pub bounds: Option<Rect>,
+//     pub target_domain: String,
+//     pub direction: GateDirection,
+//     pub entry_point: Option<usize>, // Index to enter in target domain
+// }
 
 /// A domain containing navigable elements
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,9 +129,14 @@ pub struct Domain {
     pub id: String,
     pub parent_id: Option<String>,
     pub buttons: Vec<ButtonElement>,
-    pub gates: Vec<GateElement>,
+    // DEPRECATED: gates replaced by spatial boundary navigation
+    // pub gates: Vec<GateElement>,
     pub current_index: usize,
     pub layout_mode: LayoutMode,
+    /// Screen bounds of this domain (for spatial navigation between domains)
+    pub bounds: Option<Rect>,
+    /// Directions where cursor cannot exit this domain (even if adjacent domain exists)
+    pub boundary_lock: Vec<GateDirection>,
 }
 
 impl Domain {
@@ -137,40 +145,36 @@ impl Domain {
             id,
             parent_id,
             buttons: Vec::new(),
-            gates: Vec::new(),
+            // gates: Vec::new(), // DEPRECATED
             current_index: 0,
             layout_mode,
+            bounds: None,
+            boundary_lock: Vec::new(),
         }
     }
 
-    /// Get total number of navigable elements (buttons + gates)
+    /// Get total number of navigable elements (buttons only, gates deprecated)
     pub fn element_count(&self) -> usize {
-        self.buttons.len() + self.gates.len()
+        self.buttons.len()
     }
 
-    /// Get element by index (buttons first, then gates)
+    /// Get element by index (buttons only, gates deprecated)
     pub fn get_element_at_index(&self, index: usize) -> Option<(ElementType, String)> {
         if index < self.buttons.len() {
             Some((ElementType::Button, self.buttons[index].id.clone()))
         } else {
-            let gate_index = index - self.buttons.len();
-            self.gates
-                .get(gate_index)
-                .map(|g| (ElementType::Gate, g.id.clone()))
+            None
         }
     }
 
-    /// Find index of element by ID
+    /// Find index of element by ID (buttons only, gates deprecated)
     pub fn find_element_index(&self, element_id: &str) -> Option<usize> {
-        // Search buttons first
-        if let Some(pos) = self.buttons.iter().position(|b| b.id == element_id) {
-            return Some(pos);
-        }
-        // Search gates
-        if let Some(pos) = self.gates.iter().position(|g| g.id == element_id) {
-            return Some(self.buttons.len() + pos);
-        }
-        None
+        self.buttons.iter().position(|b| b.id == element_id)
+    }
+
+    /// Check if cursor can exit in a given direction
+    pub fn can_exit_direction(&self, direction: &GateDirection) -> bool {
+        !self.boundary_lock.contains(direction)
     }
 }
 
@@ -203,12 +207,19 @@ pub enum NavigationResult {
         element_id: String,
         element_type: ElementType,
     },
-    /// Cursor is at a gate, ready to switch
-    AtGate {
-        gate_id: String,
-        target_domain: String,
+    /// Cursor hit boundary and should switch to adjacent domain
+    DomainBoundaryCrossed {
+        from_domain: String,
+        to_domain: String,
+        direction: String,
     },
-    /// Hit boundary of domain
+    // DEPRECATED: Gate system replaced by spatial boundary navigation
+    // /// Cursor is at a gate, ready to switch
+    // AtGate {
+    //     gate_id: String,
+    //     target_domain: String,
+    // },
+    /// Hit boundary of domain (no adjacent domain to switch to)
     BoundaryReached,
     /// No active domain to navigate
     NoActiveDomain,
