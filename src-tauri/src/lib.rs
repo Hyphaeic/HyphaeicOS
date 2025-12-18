@@ -10,14 +10,20 @@ mod input_handler;
 mod state;
 
 // PTY terminal module
+// PTY terminal module
 mod pty;
 
+// Audio module
+mod audio;
+
 use asset_loader::{clear_asset_cache, get_asset_cache_path, is_asset_cached, load_asset};
+use audio::{AudioState, AudioSystem};
 use input_handler::{
     DomainNavigator, ElementType, LayoutMode, ListDirection, NavigationResult, Rect, WASDKey,
 };
 use pty::PtyManager;
 use serde::Serialize;
+
 use state::window::{WindowInstance, WindowState};
 use state::StateManager;
 use std::sync::{Arc, Mutex};
@@ -256,6 +262,22 @@ fn get_system_banner(session_id: String) -> String {
     pty::generate_system_banner(&session_id)
 }
 
+// ===== Audio Commands =====
+
+#[tauri::command]
+fn play_sound(id: String, state: State<AudioState>) -> Result<(), String> {
+    let system = state.0.lock().map_err(|e| e.to_string())?;
+    system.play_sfx(&id);
+    Ok(())
+}
+
+#[tauri::command]
+fn update_audio_context(domain_id: String, state: State<AudioState>) -> Result<(), String> {
+    let mut system = state.0.lock().map_err(|e| e.to_string())?;
+    system.on_domain_change(&domain_id);
+    Ok(())
+}
+
 // ===== Domain Navigation Commands =====
 
 /// Register a new domain
@@ -465,13 +487,24 @@ fn update_button_bounds(
 
 /// Set the active domain
 #[tauri::command]
-fn set_active_domain(domain_id: String, state: State<AppState>) -> Result<(), String> {
+fn set_active_domain(
+    domain_id: String,
+    state: State<AppState>,
+    audio_state: State<AudioState>,
+) -> Result<(), String> {
     let mut navigator = state
         .domain_navigator
         .lock()
         .map_err(|e| format!("Failed to lock navigator: {}", e))?;
 
-    navigator.set_active_domain(domain_id)
+    navigator.set_active_domain(domain_id.clone())?;
+
+    // Audio Context Update
+    if let Ok(mut sys) = audio_state.0.lock() {
+        sys.on_domain_change(&domain_id);
+    }
+
+    Ok(())
 }
 
 /// Get the current active domain ID
@@ -491,6 +524,7 @@ fn handle_wasd_input(
     key: String,
     app: AppHandle,
     state: State<AppState>,
+    audio_state: State<AudioState>,
 ) -> Result<NavigationResult, String> {
     let wasd_key = WASDKey::from_str(&key).ok_or_else(|| format!("Invalid WASD key: {}", key))?;
 
@@ -780,7 +814,12 @@ fn debug_domain(domain_id: String, state: State<AppState>) -> Result<serde_json:
 }
 
 /// Helper function to process WASD navigation and emit events
-fn process_wasd_navigation(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigator>>, key: WASDKey) {
+fn process_wasd_navigation(
+    app: &AppHandle,
+    navigator: &Arc<Mutex<DomainNavigator>>,
+    audio_system: &Arc<Mutex<AudioSystem>>,
+    key: WASDKey,
+) {
     let mut nav = match navigator.lock() {
         Ok(n) => n,
         Err(e) => {
@@ -798,6 +837,13 @@ fn process_wasd_navigation(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigato
             element_id,
             element_type,
         } => {
+            // Audio Feedback
+            if let Ok(sys) = audio_system.lock() {
+                sys.play_sfx("nav");
+            } else {
+                eprintln!("[Audio] Failed to lock audio system for nav sound");
+            }
+
             let type_str = match element_type {
                 ElementType::Button => "Button",
                 ElementType::Gate => "Gate", // Deprecated but kept for type safety
@@ -839,6 +885,11 @@ fn process_wasd_navigation(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigato
                 new_element_id,
             } = &switch_result
             {
+                // Audio Feedback
+                if let Ok(mut sys) = audio_system.lock() {
+                    sys.on_domain_change(t);
+                }
+
                 let _ = app.emit(
                     "domain-switched",
                     DomainSwitchedPayload {
@@ -863,7 +914,11 @@ fn process_wasd_navigation(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigato
 
 /// Helper function to process Enter/Space activation
 /// With gates deprecated, this now only handles button activation
-fn process_activate(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigator>>) {
+fn process_activate(
+    app: &AppHandle,
+    navigator: &Arc<Mutex<DomainNavigator>>,
+    audio_system: &Arc<Mutex<AudioSystem>>,
+) {
     let nav = match navigator.lock() {
         Ok(n) => n,
         Err(_) => return,
@@ -871,6 +926,11 @@ fn process_activate(app: &AppHandle, navigator: &Arc<Mutex<DomainNavigator>>) {
 
     // Simply emit button activation for whatever element is focused
     if let Some(cursor) = nav.get_cursor_position() {
+        // Audio Feedback
+        if let Ok(sys) = audio_system.lock() {
+            sys.play_sfx("click");
+        }
+
         // Gates are deprecated - only buttons can be activated now
         let _ = app.emit(
             "button-activate",
@@ -940,6 +1000,11 @@ pub fn run() {
     // Initialize domain navigator with Arc for sharing with shortcut handlers
     let navigator = Arc::new(Mutex::new(DomainNavigator::new()));
 
+    // Initialize Audio System
+    // We must keep _stream alive, even though we don't use it directly, else audio stops.
+    let (audio_sys, _stream) = AudioSystem::new();
+    let audio_system = Arc::new(Mutex::new(audio_sys));
+
     // Initialize application state
     let app_state = AppState {
         domain_navigator: navigator.clone(),
@@ -959,8 +1024,9 @@ pub fn run() {
         ]
     };
 
-    // Clone navigator for the shortcut handler closure
+    // Clone navigator and audio for the shortcut handler closure
     let nav_for_handler = navigator.clone();
+    let audio_for_handler = audio_system.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -974,29 +1040,58 @@ pub fn run() {
 
                     // Match shortcut and process navigation
                     if shortcut == &shortcut_w {
-                        process_wasd_navigation(app, &nav_for_handler, WASDKey::W);
+                        process_wasd_navigation(
+                            app,
+                            &nav_for_handler,
+                            &audio_for_handler,
+                            WASDKey::W,
+                        );
                     } else if shortcut == &shortcut_a {
-                        process_wasd_navigation(app, &nav_for_handler, WASDKey::A);
+                        process_wasd_navigation(
+                            app,
+                            &nav_for_handler,
+                            &audio_for_handler,
+                            WASDKey::A,
+                        );
                     } else if shortcut == &shortcut_s {
-                        process_wasd_navigation(app, &nav_for_handler, WASDKey::S);
+                        process_wasd_navigation(
+                            app,
+                            &nav_for_handler,
+                            &audio_for_handler,
+                            WASDKey::S,
+                        );
                     } else if shortcut == &shortcut_d {
-                        process_wasd_navigation(app, &nav_for_handler, WASDKey::D);
+                        process_wasd_navigation(
+                            app,
+                            &nav_for_handler,
+                            &audio_for_handler,
+                            WASDKey::D,
+                        );
                     } else if shortcut == &shortcut_enter || shortcut == &shortcut_space {
-                        process_activate(app, &nav_for_handler);
+                        process_activate(app, &nav_for_handler, &audio_for_handler);
                     }
                 })
                 .build(),
         )
         .manage(app_state)
+        .manage(AudioState(audio_system))
         .manage(Mutex::new(StateManager::new()))
         .manage(Mutex::new(PtyManager::new()))
-        .setup(|_app| {
+        .setup(|app| {
             // NOTE: Shortcuts are NOT registered here anymore.
             // Frontend controls registration via set_global_shortcuts_enabled()
             // This prevents duplicate registrations and allows proper focus/blur handling.
             println!(
                 "WASD navigation system initialized (shortcuts will register on window focus)"
             );
+
+            // Initialize audio context for startup
+            let audio_state = app.state::<AudioState>();
+            if let Ok(mut sys) = audio_state.0.lock() {
+                // Default to osbar navigation soundscape on startup
+                sys.on_domain_change("osbar-nav");
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1036,6 +1131,9 @@ pub fn run() {
             pty_resize,
             pty_close,
             get_system_banner,
+            // Audio
+            play_sound,
+            update_audio_context,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

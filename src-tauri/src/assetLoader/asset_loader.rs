@@ -225,6 +225,11 @@ pub async fn get_asset_cache_path(
     Ok(file_path.to_string_lossy().to_string())
 }
 
-
-
-
+/// Load a local audio asset (e.g. from source/assets/audio/ambient)
+/// This simulates a centralized asset loader for static content.
+pub fn load_local_audio(filename: &str) -> std::io::Result<Vec<u8>> {
+    // In dev mode, we look in the src directory relative to execution
+    let base_path = "../src/assets/audio/ambient";
+    let path = std::path::Path::new(base_path).join(filename);
+    std::fs::read(path)
+}
