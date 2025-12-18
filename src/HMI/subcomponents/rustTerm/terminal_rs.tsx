@@ -25,6 +25,11 @@ export default function TerminalRS(props: TerminalRSProps) {
     let inputRef: HTMLTextAreaElement | undefined;
     let pollIntervalId: number | undefined;
 
+    // Generate a unique session ID for this specific component instance
+    // This ensures that even if the component is remounted quickly (HMR),
+    // it treats previous sessions as distinct from new ones.
+    const [mySessionId] = createSignal(`${props.windowId}-${Date.now()}`);
+
     // Character dimensions (approximate for monospace)
     const CHAR_WIDTH = 8.4;  // px
     const CHAR_HEIGHT = 16;  // px
@@ -53,8 +58,8 @@ export default function TerminalRS(props: TerminalRSProps) {
     // Spawn PTY session and display banner
     const initializeTerminal = async () => {
         try {
-            // Use window ID as session ID for uniqueness
-            const sid = props.windowId;
+            // Use our unique session ID
+            const sid = mySessionId();
 
             // Get the system banner first
             const banner = await invoke<string>("get_system_banner", { sessionId: sid });
@@ -182,11 +187,10 @@ export default function TerminalRS(props: TerminalRSProps) {
                 clearInterval(pollIntervalId);
             }
 
-            // Close PTY session
-            const sid = sessionId();
-            if (sid) {
-                invoke("pty_close", { sessionId: sid }).catch(console.error);
-            }
+            // Close PTY session - use the unique ID we generated
+            // We do this unconditionally to ensure we don't leak sessions in backend
+            // The backend's reference counting will handle safe closure
+            invoke("pty_close", { sessionId: mySessionId() }).catch(console.error);
         });
     });
 

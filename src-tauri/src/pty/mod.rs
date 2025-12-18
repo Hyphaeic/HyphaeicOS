@@ -65,6 +65,7 @@ pub struct PtySession {
     pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
     pub output_buffer: Arc<Mutex<Vec<u8>>>,
     pub is_alive: Arc<Mutex<bool>>,
+    pub ref_count: u32,
 }
 
 /// Manages multiple PTY sessions
@@ -84,18 +85,20 @@ impl PtyManager {
     pub fn spawn(&mut self, session_id: String) -> Result<String, String> {
         println!("[PTY] spawn() called with session_id: {}", session_id);
 
-        // Check if session already exists - return early to prevent duplicate PTY crash
-        if self.sessions.contains_key(&session_id) {
+        // Check if session already exists
+        if let Some(session) = self.sessions.get_mut(&session_id) {
+            session.ref_count += 1;
             println!(
-                "[PTY] Session {} already exists, returning existing session",
-                session_id
+                "[PTY] Session {} already exists, incrementing ref_count to {}",
+                session_id, session.ref_count
             );
             return Ok(session_id);
         }
 
+        println!("[PTY] Creating new session: {}", session_id);
+
         println!("[PTY] Getting native PTY system...");
         let pty_system = native_pty_system();
-        println!("[PTY] Got native PTY system");
 
         // Create PTY with default size (will be resized by frontend)
         println!("[PTY] Opening PTY with size 24x80...");
@@ -211,6 +214,7 @@ impl PtyManager {
             writer: Arc::new(Mutex::new(writer)),
             output_buffer,
             is_alive,
+            ref_count: 1,
         };
 
         println!("[PTY] Inserting session into HashMap...");
@@ -310,7 +314,37 @@ impl PtyManager {
     pub fn close(&mut self, session_id: &str) -> Result<(), String> {
         println!("[PTY] close() called for session: {}", session_id);
 
+        if let Some(session) = self.sessions.get_mut(session_id) {
+            // Decrement ref count
+            if session.ref_count > 0 {
+                session.ref_count -= 1;
+            }
+
+            println!(
+                "[PTY] Session {} ref_count decremented to {}",
+                session_id, session.ref_count
+            );
+
+            // Only close if ref count is 0
+            if session.ref_count > 0 {
+                return Ok(());
+            }
+        } else {
+            // Session not found - idempotent success to prevent errors on double-close
+            println!(
+                "[PTY] Warning: Session {} not found during close (already closed?)",
+                session_id
+            );
+            return Ok(());
+        }
+
+        // Ref count is 0, proceed with removal
         if let Some(mut session) = self.sessions.remove(session_id) {
+            println!(
+                "[PTY] Session {} ref_count is 0, closing session...",
+                session_id
+            );
+
             // Signal the reader thread to stop
             println!("[PTY] Signaling reader thread to stop...");
             if let Ok(mut alive) = session.is_alive.lock() {
@@ -341,8 +375,8 @@ impl PtyManager {
             println!("[PTY] close() completed successfully");
             Ok(())
         } else {
-            println!("[PTY] ERROR: Session {} not found", session_id);
-            Err(format!("Session {} not found", session_id))
+            // Should be unreachable due to check above, but safe fallback
+            Ok(())
         }
     }
 
