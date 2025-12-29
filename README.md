@@ -46,6 +46,7 @@ The Rust backend (`src-tauri/`) handles all core functionality including input c
 - **serde**: JSON serialization/deserialization
 - **uuid**: Unique window identifiers
 - **portable-pty**: PTY support for terminal emulation
+- **rodio**: Low-latency audio playback and mixing
 
 ### Backend Modules
 
@@ -56,11 +57,17 @@ src-tauri/src/
 ├── assetLoader/        # Remote asset downloading and caching
 │   ├── mod.rs
 │   └── asset_loader.rs # URL-based asset management
+├── audio/              # Low-latency audio system
+│   ├── mod.rs          # AudioSystem struct and initialization
+│   ├── sfx.rs          # Sound effects (decode-on-load, instant playback)
+│   └── ambience.rs     # Ambient audio with crossfading
 ├── inputHandler/       # WASD navigation system
 │   ├── mod.rs
 │   ├── types.rs        # Data structures (Domain, Button, Gate, etc.)
 │   ├── domain_navigator.rs  # Navigation logic and cursor management
 │   └── spatial.rs      # Spatial navigation algorithms
+├── pty/                # Terminal emulation
+│   └── mod.rs          # PTY session management
 └── state/              # Application state management
     ├── mod.rs          # StateManager (window tracking, slots)
     └── window.rs       # Window types (WindowInstance, WindowState)
@@ -102,31 +109,51 @@ enum NavigationResult {
 }
 ```
 
-#### 2. Window Management (`state/`)
+#### 2. State Management (`state/`)
 
-The window manager handles a dual-slot compositor system where up to two windows can be displayed simultaneously.
+The state manager handles windows and the dual-slot compositor system.
 
-**Window States:**
-- `Minimized`: Half-size, occupies one slot
-- `Maximized`: Full-size, spans entire compositor
-- `Hidden`: Not rendered
-- `Closing`: Playing close animation
-
-**Compositor Slots:**
+**StateManager Structure:**
 ```rust
-enum CompositorSlot {
-    Left,   // First available slot
-    Right,  // Second slot
+pub struct StateManager {
+    pub windows: HashMap<String, WindowInstance>, // All active windows
+    pub window_stack: Vec<String>,                // Focus history (z-order)
+    pub left_slot: Option<String>,                // Window ID in left slot
+    pub right_slot: Option<String>,               // Window ID in right slot
 }
 ```
 
-**Window Lifecycle:**
-1. `spawn_window()`: Creates window in first available slot
-2. `set_window_state()`: Transitions between states
-3. `close_window()`: Triggers closing animation
-4. `remove_window()`: Removes from state after animation
+**WindowInstance:**
+- `id`: UUID for the window
+- `content_key`: What to render (e.g., `"SYS_TERMINAL"`)
+- `state`: `Minimized` | `Maximized` | `Hidden` | `Closing`
+- `slot`: `Left` | `Right`
+- `source_element_id` / `source_domain_id`: For focus return on close
 
-#### 3. Asset Loader (`assetLoader/`)
+**Window Lifecycle:**
+1. `spawn_window()` → Creates window in first available slot, emits `window-created`
+2. `set_window_state()` → Transitions between states, emits `window-state-changed`
+3. `close_window()` → Sets state to `Closing`, triggers animation
+4. `remove_window()` → Removes from state, emits `window-closed` and `return-focus`
+
+#### 3. PTY Terminal System (`pty/`)
+
+Manages pseudo-terminal sessions for terminal emulation using `portable-pty`.
+
+**Key Features:**
+- **Reference counting**: Multiple components can share a session
+- **Thread-safe**: Background reader thread buffers PTY output
+- **Platform-aware**: PowerShell on Windows, bash on Unix
+- **Graceful cleanup**: Handles Windows ConPTY quirks
+
+**Session Lifecycle:**
+1. `pty_spawn(session_id)` → Creates PTY session with shell process
+2. `pty_write(session_id, data)` → Writes to PTY stdin
+3. `pty_read(session_id)` → Drains output buffer (non-blocking)
+4. `pty_resize(session_id, rows, cols)` → Resizes terminal
+5. `pty_close(session_id)` → Decrements ref count, cleans up when zero
+
+#### 4. Asset Loader (`assetLoader/`)
 
 Downloads and caches remote assets (images, videos, audio, documents) to the local app data directory.
 
@@ -143,6 +170,35 @@ is_asset_cached(url, asset_type) -> bool
 get_asset_cache_path(url, asset_type) -> String
 clear_asset_cache(asset_type?) -> String
 ```
+
+#### 5. Audio System (`audio/`)
+
+A low-latency audio system built on `rodio` with two distinct engines:
+
+**SFX Engine** (`sfx.rs`):
+- **Decode-on-load strategy**: All sound effects are decoded to raw PCM at startup
+- **Instant playback**: Creating a cursor over pre-decoded buffers takes nanoseconds
+- **Fire-and-forget**: No management needed after triggering
+
+**Ambience Engine** (`ambience.rs`):
+- **Virtual Timeline**: All ambient tracks conceptually play simultaneously, mixed dynamically
+- **PCM Buffering**: MP3s decoded to `Vec<f32>` for seamless looping via `repeat_infinite()`
+- **Crossfading**: Dedicated background thread handles volume ramping at ~100Hz
+- **Domain-aware**: Automatically switches ambient tracks based on active UI domain
+
+**How It Works:**
+```rust
+// SFX - instant feedback
+audio_system.play_sfx("nav");     // Navigation sound
+audio_system.play_sfx("click");   // Click sound
+
+// Ambience - domain-based switching with crossfade
+audio_system.on_domain_change("new-domain-id");
+```
+
+**Performance:**
+- Memory: ~30MB per 3-minute stereo ambient track (uncompressed PCM) // note for future: this must be trimmable. surely we don't need to keep everything in memory at once, can we do something like keep a virtual timeline, then 10 seconds of every track in a single rolling window loading in and out of memory?
+- CPU: Negligible (fade thread mostly sleeping, mixing handled by OS audio thread)
 
 ### Tauri Commands (API)
 
@@ -166,6 +222,16 @@ clear_asset_cache(asset_type?) -> String
 | `close_window` | `id` | Begin window close animation |
 | `remove_window` | `id` | Remove window from state |
 | `set_window_state` | `id`, `windowState` | Change window state |
+
+#### PTY Terminal Commands
+| Command | Parameters | Description |
+|---------|------------|-------------|
+| `pty_spawn` | `sessionId` | Spawn a new PTY session |
+| `pty_write` | `sessionId`, `data` | Write to PTY stdin |
+| `pty_read` | `sessionId` | Read buffered PTY output |
+| `pty_resize` | `sessionId`, `rows`, `cols` | Resize terminal |
+| `pty_close` | `sessionId` | Close PTY session |
+| `get_system_banner` | `sessionId` | Get boot banner for terminal |
 
 #### Utility Commands
 | Command | Parameters | Description |
@@ -473,6 +539,8 @@ Detailed documentation is available in the following files:
 
 | Document | Location | Description |
 |----------|----------|-------------|
+| State Management README | `src-tauri/src/state/README.md` | Windows, compositor, and PTY sessions |
+| Audio System README | `src-tauri/src/audio/README.md` | Audio architecture and integration guide |
 | Input Handler README | `src-tauri/src/inputHandler/INPUT_HANDLER_README.md` | Complete navigation system docs |
 | Controller Architecture | `src/HMI/A_Controller/ARCHITECTURE.md` | Frontend input handling design |
 | Domain Navigation Example | `src-tauri/src/inputHandler/DOMAIN_NAVIGATION_EXAMPLE.md` | Usage examples |
