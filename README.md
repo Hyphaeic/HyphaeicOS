@@ -539,6 +539,7 @@ Detailed documentation is available in the following files:
 
 | Document | Location | Description |
 |----------|----------|-------------|
+| Asset Loader README | `src-tauri/src/assetLoader/README.md` | Remote/local asset loading and caching |
 | State Management README | `src-tauri/src/state/README.md` | Windows, compositor, and PTY sessions |
 | Audio System README | `src-tauri/src/audio/README.md` | Audio architecture and integration guide |
 | Input Handler README | `src-tauri/src/inputHandler/INPUT_HANDLER_README.md` | Complete navigation system docs |
