@@ -35,7 +35,7 @@ export default function BackgroundIC(props: BackgroundProps) {
   const [fromCache, setFromCache] = createSignal(false);
 
   // Default background URL
-  const backgroundUrl = () => props.url ?? "https://src.hyphaeic.com/1.jpg";
+  const backgroundUrl = () => props.url ?? "https://src.hyphaeic.com/website/backgrounds/1.jpg";
 
   onMount(async () => {
     try {
